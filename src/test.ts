@@ -48,6 +48,7 @@ const sampleRequest: TrademarkRegistrationRequest = {
   ],
   leadClass: 9,
   paymentMethod: PaymentMethod.BANK_TRANSFER,
+  senderName: 'Max Mustermann',
 };
 
 /**

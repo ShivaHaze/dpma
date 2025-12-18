@@ -17,7 +17,7 @@ export enum ApplicantType {
 export enum TrademarkType {
   WORD = 'word',                    // Wortmarke
   FIGURATIVE = 'figurative',        // Bildmarke
-  COMBINED = 'combined',            // Wort-/Bildmarke
+  COMBINED = 'combined',            // Wort-/Bildmarke (image upload only, no separate text field)
   THREE_DIMENSIONAL = '3d',         // Dreidimensionale Marke
   COLOR = 'color',                  // Farbmarke
   SOUND = 'sound',                  // Klangmarke
@@ -26,7 +26,14 @@ export enum TrademarkType {
   MOTION = 'motion',                // Bewegungsmarke
   MULTIMEDIA = 'multimedia',        // Multimediamarke
   HOLOGRAM = 'hologram',            // Hologrammmarke
+  THREAD = 'thread',                // Kennfadenmarke
   OTHER = 'other'                   // Sonstige Marke
+}
+
+/** SEPA mandate type */
+export enum SepaMandateType {
+  PERMANENT = 'permanent',          // Dauer-SEPA-Mandatsverwendung (all future fees auto-debited)
+  SINGLE = 'single'                 // (Mehrfach-)Einzel-SEPA-Mandatsverwendung (only current fees)
 }
 
 /** Payment method */
@@ -47,12 +54,19 @@ export enum SanctionDeclaration {
 
 /** Address information */
 export interface Address {
-  street: string;              // Street + house number
-  addressLine1?: string;       // Additional address line
-  addressLine2?: string;       // Additional address line 2
-  zip: string;                 // Postal code
-  city: string;                // City
-  country: string;             // ISO country code (e.g., 'DE')
+  street: string;              // Straße, Hausnummer (Street + house number)
+  addressLine1?: string;       // Adresszusatz 1 (Additional address line)
+  addressLine2?: string;       // Adresszusatz 2 (Additional address line 2)
+  zip: string;                 // Postleitzahl (Postal code)
+  city: string;                // Ort (City)
+  country: string;             // Land - ISO country code (e.g., 'DE')
+}
+
+/** Contact information for correspondence */
+export interface ContactInfo {
+  telephone?: string;          // Telefon (optional for applicant, required for delivery)
+  fax?: string;                // Fax (optional)
+  email: string;               // E-Mail (required)
 }
 
 /** Natural person applicant */
@@ -76,58 +90,245 @@ export interface LegalEntityApplicant {
 /** Union of applicant types */
 export type Applicant = NaturalPersonApplicant | LegalEntityApplicant;
 
+// ============================================================================
+// REPRESENTATIVE / LAWYER (Step 2)
+// ============================================================================
+
+/** Representative (Lawyer/Law Firm) - Step 2 */
+export interface Representative {
+  /** Type of representative */
+  type: ApplicantType;
+
+  /** For natural person */
+  salutation?: string;           // Anrede/Titel
+  firstName?: string;            // Vorname
+  lastName?: string;             // Nachname
+
+  /** For legal entity */
+  companyName?: string;          // Firma/Organisation
+  legalForm?: string;            // Rechtsform
+
+  /** Address */
+  address: Address;
+
+  /** Contact information */
+  contact: ContactInfo;
+
+  /** Lawyer registration ID (optional) */
+  lawyerRegistrationId?: string; // Rechtsanwaltskammer-ID
+
+  /** Internal reference (Geschäftszeichen) */
+  internalReference?: string;
+}
+
+/** Delivery address configuration (Step 3) */
+export interface DeliveryAddress {
+  /** Copy address from applicant */
+  copyFromApplicant?: boolean;
+
+  /** Type of recipient */
+  type: ApplicantType;
+
+  /** For natural person */
+  salutation?: string;           // Anrede/Titel
+  firstName?: string;            // Vorname
+  lastName: string;              // Nachname (required)
+
+  /** For legal entity */
+  companyName?: string;          // Firma/Organisation
+  legalForm?: string;            // Rechtsform
+
+  /** Address */
+  address: Address;
+
+  /** Contact (email required) */
+  contact: ContactInfo;
+}
+
 /** Russia sanctions declaration */
 export interface SanctionsDeclaration {
   hasRussianNationality: boolean;
   hasRussianResidence: boolean;
 }
 
-/** Word trademark */
-export interface WordTrademark {
-  type: TrademarkType.WORD;
-  text: string;                // The trademark text
+/** Common trademark fields that apply to all trademark types */
+export interface TrademarkCommonFields {
+  /** Color elements in the trademark (Farbangabe) */
+  colorElements?: string[];
+
+  /** Contains non-Latin characters (nicht-lateinische Zeichen) */
+  hasNonLatinCharacters?: boolean;
+
+  /** Trademark description (Beschreibung der Marke) */
+  description?: string;
 }
 
-/** Image trademark */
-export interface ImageTrademark {
+/** Word trademark */
+export interface WordTrademark extends TrademarkCommonFields {
+  type: TrademarkType.WORD;
+  text: string;                // The trademark text (Markendarstellung)
+}
+
+/** Image trademark (Bildmarke) */
+export interface ImageTrademark extends TrademarkCommonFields {
   type: TrademarkType.FIGURATIVE;
   imageData: Buffer;           // Image file data
   imageMimeType: string;       // e.g., 'image/png', 'image/jpeg'
   imageFileName: string;       // Original filename
 }
 
-/** Combined word/image trademark */
-export interface CombinedTrademark {
+/**
+ * Combined word/image trademark (Wort-/Bildmarke)
+ * NOTE: DPMA form only has image upload for combined marks, no separate text field.
+ * The text is embedded in the image itself.
+ */
+export interface CombinedTrademark extends TrademarkCommonFields {
   type: TrademarkType.COMBINED;
-  text: string;                // The trademark text
-  imageData: Buffer;           // Image file data
+  imageData: Buffer;           // Image file data (contains both word and image)
   imageMimeType: string;       // e.g., 'image/png', 'image/jpeg'
   imageFileName: string;       // Original filename
 }
 
-/** Union of trademark types (expandable for other types) */
-export type Trademark = WordTrademark | ImageTrademark | CombinedTrademark;
+/** 3D trademark */
+export interface ThreeDimensionalTrademark extends TrademarkCommonFields {
+  type: TrademarkType.THREE_DIMENSIONAL;
+  imageData: Buffer;           // Image/representation file data
+  imageMimeType: string;
+  imageFileName: string;
+}
+
+/** Color trademark */
+export interface ColorTrademark extends TrademarkCommonFields {
+  type: TrademarkType.COLOR;
+  imageData?: Buffer;          // Optional image representation
+  imageMimeType?: string;
+  imageFileName?: string;
+}
+
+/** Sound trademark */
+export interface SoundTrademark extends TrademarkCommonFields {
+  type: TrademarkType.SOUND;
+  soundData: Buffer;           // Audio file data
+  soundMimeType: string;       // e.g., 'audio/mpeg'
+  soundFileName: string;
+}
+
+/** Thread mark (Kennfadenmarke) */
+export interface ThreadTrademark extends TrademarkCommonFields {
+  type: TrademarkType.THREAD;
+  imageData: Buffer;           // Image representation
+  imageMimeType: string;
+  imageFileName: string;
+}
+
+/** Other trademark types (Position, Pattern, Motion, Multimedia, Hologram, Other) */
+export interface OtherTrademark extends TrademarkCommonFields {
+  type: TrademarkType.POSITION | TrademarkType.PATTERN | TrademarkType.MOTION |
+        TrademarkType.MULTIMEDIA | TrademarkType.HOLOGRAM | TrademarkType.OTHER;
+  imageData?: Buffer;          // Image/media data
+  imageMimeType?: string;
+  imageFileName?: string;
+}
+
+/** Union of trademark types */
+export type Trademark =
+  | WordTrademark
+  | ImageTrademark
+  | CombinedTrademark
+  | ThreeDimensionalTrademark
+  | ColorTrademark
+  | SoundTrademark
+  | ThreadTrademark
+  | OtherTrademark;
 
 /** Nice classification selection */
 export interface NiceClassSelection {
   classNumber: number;         // 1-45
-  terms?: string[];            // Specific terms (optional, uses class header if empty)
+
+  /**
+   * Specific term names to select (optional)
+   * Examples: ["Software", "Anwendungssoftware", "Betriebssysteme"]
+   *
+   * Terms are searched and matched by their exact German name as shown in the DPMA form.
+   * If empty/undefined, selects the class header (all terms in the class).
+   *
+   * Common terms for popular classes:
+   * - Class 9 (Software/Electronics): "Software", "Anwendungssoftware", "Spielsoftware",
+   *   "Künstliche Intelligenz-Software und maschinelle Lernsoftware", "Betriebssysteme"
+   * - Class 35 (Business): "Werbung, Marketing und Verkaufsförderung"
+   * - Class 42 (IT Services): "IT-Dienstleistungen", "Entwicklung, Programmierung und Implementierung von Software",
+   *   "Hosting-Dienste, Software as a Service [SaaS] und Vermietung von Software"
+   */
+  terms?: string[];
+
+  /**
+   * If true, selects the class header (Gruppentitel) which includes ALL terms in that class.
+   * This is useful when you want broad protection for an entire Nice class.
+   * Defaults to true when terms array is empty/undefined.
+   */
+  selectClassHeader?: boolean;
 }
 
-/** Priority claim (optional) */
-export interface PriorityClaim {
-  type: 'union' | 'exhibition';
-  date: string;                // ISO date string
-  country?: string;            // For union priority
-  applicationNumber?: string;  // For union priority
-  exhibitionName?: string;     // For exhibition priority
+/** Foreign priority claim (Ausländische Priorität) - §34 MarkenG */
+export interface ForeignPriorityClaim {
+  type: 'foreign';
+  date: string;                // Datum (ISO date string) - required
+  country: string;             // Land (Country code) - required
+  applicationNumber: string;   // Aktenzeichen (File number) - required
 }
 
-/** SEPA direct debit details (required if payment method is SEPA) */
+/** Exhibition priority claim (Austellungspriorität) - §35 MarkenG */
+export interface ExhibitionPriorityClaim {
+  type: 'exhibition';
+  date: string;                // Datum (ISO date string) - required
+  exhibitionName: string;      // Austellungsname - required
+}
+
+/** Union type for priority claims */
+export type PriorityClaim = ForeignPriorityClaim | ExhibitionPriorityClaim;
+
+/** SEPA contact person for direct debit - Natural Person */
+export interface SepaContactNaturalPerson {
+  type: ApplicantType.NATURAL;
+  salutation?: string;           // Anrede/Titel
+  lastName: string;              // Nachname (required)
+  firstName?: string;            // Vorname
+  address: Address;
+  telephone: string;             // Telefon (required)
+  fax?: string;                  // Fax (optional)
+  email: string;                 // E-Mail (required)
+}
+
+/** SEPA contact person for direct debit - Legal Entity */
+export interface SepaContactLegalEntity {
+  type: ApplicantType.LEGAL;
+  legalForm?: string;            // Rechtsform/Gesellschaftsform
+  companyName: string;           // Firmenname (required)
+  address: Address;
+  telephone: string;             // Telefon (required)
+  fax?: string;                  // Fax (optional)
+  email: string;                 // E-Mail (required)
+}
+
+/** Union type for SEPA contact */
+export type SepaContact = SepaContactNaturalPerson | SepaContactLegalEntity;
+
+/**
+ * SEPA direct debit details (required if payment method is SEPA_DIRECT_DEBIT)
+ * NOTE: Requires a valid SEPA mandate (A9530 form) to be on file with DPMA
+ */
 export interface SepaDetails {
-  iban: string;
-  bic: string;
-  accountHolder: string;
+  /** Mandate reference number (Mandatsreferenznummer) - required */
+  mandateReferenceNumber: string;
+
+  /** Mandate type - permanent or single use */
+  mandateType: SepaMandateType;
+
+  /** Copy contact from applicant address */
+  copyFromApplicant?: boolean;
+
+  /** Contact person for SEPA (required if not copying from applicant) */
+  contact?: SepaContact;
 }
 
 /** Additional options for Step 6 */
@@ -141,32 +342,77 @@ export interface AdditionalOptions {
 
 /** Complete trademark registration request */
 export interface TrademarkRegistrationRequest {
+  // =========================================================================
+  // Step 1: Applicant (Anmelder)
+  // =========================================================================
+
   /** Applicant information */
   applicant: Applicant;
 
   /** Sanctions declaration (required for all applicants) */
   sanctions: SanctionsDeclaration;
 
-  /** Email address for correspondence */
+  // =========================================================================
+  // Step 2: Representative/Lawyer (Anwalt/Kanzlei) - Optional
+  // =========================================================================
+
+  /** Legal representative(s) - optional */
+  representatives?: Representative[];
+
+  // =========================================================================
+  // Step 3: Delivery Address (Zustelladresse)
+  // =========================================================================
+
+  /** Delivery address for correspondence */
+  deliveryAddress?: DeliveryAddress;
+
+  /** Email address for correspondence (required) */
   email: string;
+
+  // =========================================================================
+  // Step 4: Trademark (Marke)
+  // =========================================================================
 
   /** The trademark to register */
   trademark: Trademark;
 
-  /** Nice classification classes to register */
+  // =========================================================================
+  // Step 5: Nice Classification (WDVZ)
+  // =========================================================================
+
+  /** Nice classification classes to register (1-45) */
   niceClasses: NiceClassSelection[];
 
-  /** Lead class suggestion (defaults to first class) */
+  /** Lead class suggestion (Leitklassenvorschlag) - defaults to first class */
   leadClass?: number;
 
-  /** Additional options (Step 6) */
+  // =========================================================================
+  // Step 6: Additional Options (Sonstiges)
+  // =========================================================================
+
+  /** Additional options */
   options?: AdditionalOptions;
+
+  // =========================================================================
+  // Step 7: Payment (Zahlung)
+  // =========================================================================
 
   /** Payment method */
   paymentMethod: PaymentMethod;
 
   /** SEPA details (required if paymentMethod is SEPA_DIRECT_DEBIT) */
   sepaDetails?: SepaDetails;
+
+  // =========================================================================
+  // Step 8: Summary/Submission (Zusammenfassung)
+  // =========================================================================
+
+  /** Sender's full name for final submission (Vor- und Nachname des Absenders) */
+  senderName: string;
+
+  // =========================================================================
+  // Internal/Optional
+  // =========================================================================
 
   /** Internal document reference (optional) */
   internalReference?: string;

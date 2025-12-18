@@ -192,9 +192,7 @@ export function validateTrademarkRequest(request: unknown): ValidationResult {
     }
 
     if (trademark.type === TrademarkType.COMBINED) {
-      if (!('text' in trademark) || !trademark.text?.trim()) {
-        errors.push({ field: 'trademark.text', message: 'Trademark text is required for combined marks' });
-      }
+      // Combined marks only require image (text is embedded in image)
       if (!('imageData' in trademark) || !trademark.imageData) {
         errors.push({ field: 'trademark.imageData', message: 'Image data is required for combined marks' });
       }
@@ -251,22 +249,26 @@ export function validateTrademarkRequest(request: unknown): ValidationResult {
     if (!req.sepaDetails) {
       errors.push({ field: 'sepaDetails', message: 'SEPA details are required for direct debit payment' });
     } else {
-      if (!req.sepaDetails.iban?.trim()) {
-        errors.push({ field: 'sepaDetails.iban', message: 'IBAN is required' });
-      } else if (!isValidIBAN(req.sepaDetails.iban)) {
-        errors.push({ field: 'sepaDetails.iban', message: 'Invalid IBAN format' });
+      if (!req.sepaDetails.mandateReferenceNumber?.trim()) {
+        errors.push({ field: 'sepaDetails.mandateReferenceNumber', message: 'SEPA mandate reference number is required' });
       }
 
-      if (!req.sepaDetails.bic?.trim()) {
-        errors.push({ field: 'sepaDetails.bic', message: 'BIC is required' });
-      } else if (!isValidBIC(req.sepaDetails.bic)) {
-        errors.push({ field: 'sepaDetails.bic', message: 'Invalid BIC format' });
+      if (!req.sepaDetails.mandateType) {
+        errors.push({ field: 'sepaDetails.mandateType', message: 'SEPA mandate type is required' });
       }
 
-      if (!req.sepaDetails.accountHolder?.trim()) {
-        errors.push({ field: 'sepaDetails.accountHolder', message: 'Account holder name is required' });
+      // If not copying from applicant, contact details are required
+      if (!req.sepaDetails.copyFromApplicant && !req.sepaDetails.contact) {
+        errors.push({ field: 'sepaDetails.contact', message: 'SEPA contact details are required if not copying from applicant' });
       }
     }
+  }
+
+  // ============================================================================
+  // Validate Sender Name (Step 8)
+  // ============================================================================
+  if (!req.senderName?.trim()) {
+    errors.push({ field: 'senderName', message: 'Sender name is required for final submission' });
   }
 
   return {

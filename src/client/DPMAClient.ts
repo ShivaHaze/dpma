@@ -546,7 +546,9 @@ export class DPMAClient {
    * Step 3: Submit delivery address (Zustelladresse)
    *
    * This step requires full address information, not just email.
-   * We copy the applicant's address to the delivery address.
+   * Supports two modes:
+   * 1. If deliveryAddress is provided and copyFromApplicant is NOT true → use deliveryAddress
+   * 2. Otherwise → copy from applicant (backwards compatible behavior)
    *
    * IMPORTANT: The country field uses ISO codes (DE, AT, etc.), NOT display names!
    * All fields must be sent, even if empty, to match browser behavior.
@@ -554,8 +556,17 @@ export class DPMAClient {
   async submitDeliveryAddress(request: TrademarkRegistrationRequest): Promise<void> {
     this.log('Step 3: Submitting delivery address...');
 
-    const { applicant, email } = request;
-    const address = applicant.address;
+    const { applicant, email, deliveryAddress } = request;
+
+    // Determine if we should use a separate delivery address or copy from applicant
+    const useDeliveryAddress = deliveryAddress && !deliveryAddress.copyFromApplicant;
+
+    // Get the source data
+    const entityType = useDeliveryAddress ? deliveryAddress.type : applicant.type;
+    const address = useDeliveryAddress ? deliveryAddress.address : applicant.address;
+    const contactEmail = useDeliveryAddress ? deliveryAddress.contact.email : email;
+    const contactPhone = useDeliveryAddress ? (deliveryAddress.contact.telephone || '') : '';
+    const contactFax = useDeliveryAddress ? (deliveryAddress.contact.fax || '') : '';
 
     // Build delivery address fields - must match browser exactly
     // All fields must be included, even empty ones
@@ -567,7 +578,7 @@ export class DPMAClient {
       'daf-correspondence:address-ref-combo-a:valueHolder_input': 'Neue Adresse',
 
       // Address type (natural or legal person)
-      'daf-correspondence:addressEntityType': applicant.type === 'natural' ? 'natural' : 'legal',
+      'daf-correspondence:addressEntityType': entityType === 'natural' ? 'natural' : 'legal',
 
       // Name prefix fields (all three must be sent)
       'daf-correspondence:namePrefix:valueHolder_focus': '',
@@ -588,25 +599,53 @@ export class DPMAClient {
       'daf-correspondence:country:valueHolder_input': address.country,
 
       // Contact fields
-      'daf-correspondence:phone:valueHolder': '',
-      'daf-correspondence:fax:valueHolder': '',
-      'daf-correspondence:email:valueHolder': email,
+      'daf-correspondence:phone:valueHolder': contactPhone,
+      'daf-correspondence:fax:valueHolder': contactFax,
+      'daf-correspondence:email:valueHolder': contactEmail,
 
       // Panel state
       'editorPanel_active': 'null',
     };
 
-    // Add name fields based on applicant type
-    if (applicant.type === 'natural') {
-      fields['daf-correspondence:lastName:valueHolder'] = applicant.lastName;
-      fields['daf-correspondence:firstName:valueHolder'] = applicant.firstName;
+    // Add name fields based on entity type
+    if (entityType === 'natural') {
+      if (useDeliveryAddress) {
+        // Use delivery address name fields
+        fields['daf-correspondence:lastName:valueHolder'] = deliveryAddress.lastName;
+        fields['daf-correspondence:firstName:valueHolder'] = deliveryAddress.firstName || '';
+        if (deliveryAddress.salutation) {
+          fields['daf-correspondence:namePrefix:valueHolder_input'] = deliveryAddress.salutation;
+          fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = deliveryAddress.salutation;
+        }
+      } else {
+        // Copy from natural person applicant
+        const naturalApplicant = applicant as NaturalPersonApplicant;
+        fields['daf-correspondence:lastName:valueHolder'] = naturalApplicant.lastName;
+        fields['daf-correspondence:firstName:valueHolder'] = naturalApplicant.firstName;
+        if (naturalApplicant.salutation) {
+          fields['daf-correspondence:namePrefix:valueHolder_input'] = naturalApplicant.salutation;
+          fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = naturalApplicant.salutation;
+        }
+      }
     } else {
-      fields['daf-correspondence:companyName:valueHolder'] = applicant.companyName;
-      if (applicant.legalForm) {
-        fields['daf-correspondence:legalForm:valueHolder'] = applicant.legalForm;
+      // Legal entity
+      if (useDeliveryAddress) {
+        // Use delivery address company fields
+        fields['daf-correspondence:companyName:valueHolder'] = deliveryAddress.companyName || '';
+        if (deliveryAddress.legalForm) {
+          fields['daf-correspondence:legalForm:valueHolder'] = deliveryAddress.legalForm;
+        }
+      } else {
+        // Copy from legal entity applicant
+        const legalApplicant = applicant as LegalEntityApplicant;
+        fields['daf-correspondence:companyName:valueHolder'] = legalApplicant.companyName;
+        if (legalApplicant.legalForm) {
+          fields['daf-correspondence:legalForm:valueHolder'] = legalApplicant.legalForm;
+        }
       }
     }
 
+    this.log(`Step 3: Using ${useDeliveryAddress ? 'separate delivery address' : 'applicant address'} (${entityType})`);
     await this.submitStep(fields, DPMA_VIEW_IDS.STEP_3_TO_4);
     this.log('Step 3 completed');
   }
@@ -703,12 +742,136 @@ export class DPMAClient {
   }
 
   /**
+   * Upload an image file for image/combined trademarks
+   *
+   * This method handles the PrimeFaces file upload mechanism:
+   * 1. Navigate to the upload page by clicking "Bilddatei hinzufügen" button
+   * 2. POST the image file via multipart/form-data
+   * 3. Confirm the upload
+   */
+  private async uploadTrademarkImage(imageData: Buffer, mimeType: string, fileName: string): Promise<void> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+
+    this.log(`Uploading trademark image: ${fileName} (${mimeType}, ${imageData.length} bytes)`);
+
+    // Step 1: Navigate to the upload page by triggering the upload button
+    // This is done via AJAX call that opens the upload dialog
+    const uploadButtonFields: Record<string, string> = {
+      'jakarta.faces.partial.ajax': 'true',
+      'jakarta.faces.source': 'editor-form:mark-image:markAttachmentsPanelAdd',
+      'jakarta.faces.partial.execute': '@all',
+      'jakarta.faces.partial.render': '@all',
+      'editor-form:mark-image:markAttachmentsPanelAdd': 'editor-form:mark-image:markAttachmentsPanelAdd',
+      'editor-form': 'editor-form',
+      'dpmaViewItemIndex': '0',
+      'jakarta.faces.ViewState': this.session.tokens.viewState,
+      'jakarta.faces.ClientWindow': this.session.tokens.clientWindow,
+      'primefaces.nonce': this.session.tokens.primefacesNonce,
+    };
+
+    const uploadDialogUrl = this.buildFormUrl();
+    const uploadDialogBody = this.createUrlEncodedBody(uploadButtonFields);
+
+    const uploadDialogResponse = await this.client.post(uploadDialogUrl, uploadDialogBody, {
+      headers: {
+        ...AJAX_HEADERS,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Referer': `${BASE_URL}${uploadDialogUrl}`,
+      },
+    });
+
+    // Extract tokens from response
+    if (uploadDialogResponse.data && typeof uploadDialogResponse.data === 'string') {
+      this.lastResponseHtml = uploadDialogResponse.data;
+      this.saveDebugFile('upload_dialog.xml', uploadDialogResponse.data);
+      this.updateTokensFromResponse(uploadDialogResponse.data);
+    }
+
+    // Step 2: Upload the actual file via multipart/form-data
+    // The upload endpoint is w7005-upload.xhtml
+    const uploadUrl = `${EDITOR_PATH}/w7005/w7005-upload.xhtml?jfwid=${this.session.jfwid}`;
+
+    // Create form data for file upload
+    const formData = new FormData();
+    formData.append('mainupload:webUpload', 'mainupload:webUpload');
+    formData.append('mainupload:webUpload:screenSizeForCalculation', '1296');
+    formData.append('jakarta.faces.ViewState', this.session.tokens.viewState);
+    formData.append('jakarta.faces.ClientWindow', this.session.tokens.clientWindow);
+    formData.append('primefaces.nonce', this.session.tokens.primefacesNonce);
+
+    // Ensure the file is a JPG (DPMA only accepts .jpg)
+    let uploadBuffer = imageData;
+    let uploadFileName = fileName;
+    if (!fileName.toLowerCase().endsWith('.jpg') && !fileName.toLowerCase().endsWith('.jpeg')) {
+      // If not a JPG, assume it's been converted and just rename
+      uploadFileName = fileName.replace(/\.[^.]+$/, '.jpg');
+    }
+
+    formData.append('mainupload:webUpload:webFileUpload_input', uploadBuffer, {
+      filename: uploadFileName,
+      contentType: 'image/jpeg',
+    });
+
+    this.log(`Uploading to ${uploadUrl}...`);
+
+    const uploadResponse = await this.client.post(uploadUrl, formData, {
+      headers: {
+        ...formData.getHeaders(),
+        'Referer': `${BASE_URL}${uploadUrl}`,
+      },
+    });
+
+    this.saveDebugFile('upload_response.html', uploadResponse.data);
+
+    // Extract updated tokens from the upload response
+    if (uploadResponse.data && typeof uploadResponse.data === 'string') {
+      this.lastResponseHtml = uploadResponse.data;
+      this.updateTokensFromResponse(uploadResponse.data);
+
+      // Check for upload errors
+      if (uploadResponse.data.includes('Fehler') || uploadResponse.data.includes('error')) {
+        this.log('Warning: Upload response may contain errors');
+      }
+    }
+
+    this.log('Image upload completed successfully');
+  }
+
+  /**
+   * Helper to update tokens from AJAX/HTML response
+   */
+  private updateTokensFromResponse(responseData: string): void {
+    if (!this.session) return;
+
+    // Extract ViewState
+    const viewStateMatch = responseData.match(/jakarta\.faces\.ViewState[^>]*>(?:<!\[CDATA\[)?([^<\]]+)/);
+    if (viewStateMatch) {
+      this.session.tokens.viewState = viewStateMatch[1];
+    }
+
+    // Extract ClientWindow
+    const clientWindowMatch = responseData.match(/jakarta\.faces\.ClientWindow[^>]*>(?:<!\[CDATA\[)?([^<\]]+)/);
+    if (clientWindowMatch) {
+      this.session.tokens.clientWindow = clientWindowMatch[1];
+    }
+
+    // Extract nonce
+    const nonceMatch = responseData.match(/PrimeFaces\.csp\.init\(['"]([^'"]+)['"]\)/);
+    if (nonceMatch) {
+      this.session.tokens.primefacesNonce = nonceMatch[1];
+    }
+  }
+
+  /**
    * Step 4: Submit trademark information (Marke)
    *
    * IMPORTANT: PrimeFaces dropdowns require a change event to be triggered
    * before the form can properly validate. We must:
    * 1. First trigger the dropdown change event (simulates selecting from dropdown)
-   * 2. Then submit the full form with the text value
+   * 2. For image marks: upload the image file
+   * 3. Then submit the full form with the trademark data
    */
   async submitTrademark(request: TrademarkRegistrationRequest): Promise<void> {
     this.log('Step 4: Submitting trademark information...');
@@ -717,19 +880,42 @@ export class DPMAClient {
 
     // Determine the dropdown value based on trademark type
     let dropdownValue: string;
+    let requiresImageUpload = false;
+
     switch (trademark.type) {
       case TrademarkType.WORD:
         dropdownValue = 'word';
         break;
       case TrademarkType.FIGURATIVE:
         dropdownValue = 'image';
-        throw new Error('Image trademark upload not yet implemented');
+        requiresImageUpload = true;
+        break;
       case TrademarkType.COMBINED:
         dropdownValue = 'figurative';
-        throw new Error('Combined trademark upload not yet implemented');
-      default:
-        const _exhaustiveCheck: never = trademark;
-        throw new Error(`Trademark type not yet implemented: ${(_exhaustiveCheck as any).type}`);
+        requiresImageUpload = true;
+        break;
+      case TrademarkType.THREE_DIMENSIONAL:
+        dropdownValue = 'spatial';
+        requiresImageUpload = true;
+        break;
+      case TrademarkType.COLOR:
+        throw new Error('Color trademark not yet implemented');
+      case TrademarkType.SOUND:
+        throw new Error('Sound trademark not yet implemented');
+      case TrademarkType.POSITION:
+        throw new Error('Position trademark not yet implemented');
+      case TrademarkType.PATTERN:
+        throw new Error('Pattern trademark not yet implemented');
+      case TrademarkType.MOTION:
+        throw new Error('Motion trademark not yet implemented');
+      case TrademarkType.MULTIMEDIA:
+        throw new Error('Multimedia trademark not yet implemented');
+      case TrademarkType.HOLOGRAM:
+        throw new Error('Hologram trademark not yet implemented');
+      case TrademarkType.THREAD:
+        throw new Error('Thread trademark (Kennfadenmarke) not yet implemented');
+      case TrademarkType.OTHER:
+        throw new Error('Other trademark type not yet implemented');
     }
 
     // STEP 4a: First trigger the dropdown change event
@@ -738,14 +924,43 @@ export class DPMAClient {
       'dpmaViewItemIndex': '0',
     });
 
-    // STEP 4b: Now submit the full form with the trademark text
+    // STEP 4b: For image marks, upload the image file
+    if (requiresImageUpload) {
+      if (!('imageData' in trademark) || !trademark.imageData) {
+        throw new Error(`Image data is required for ${trademark.type} trademark`);
+      }
+      await this.uploadTrademarkImage(
+        trademark.imageData,
+        trademark.imageMimeType,
+        trademark.imageFileName
+      );
+    }
+
+    // STEP 4c: Now submit the full form with the trademark data
+    const trademarkText = trademark.type === TrademarkType.WORD ? trademark.text : '';
     const fields: Record<string, string> = {
       'dpmaViewItemIndex': '0',
       'editorPanel_active': 'null',
       'markFeatureCombo:valueHolder_input': dropdownValue,
-      'mark-verbalText:valueHolder': trademark.text,
+      'mark-verbalText:valueHolder': trademarkText,
       'mark-docRefNumber:valueHolder': request.internalReference || '',
     };
+
+    // Add color elements if specified
+    if (trademark.colorElements && trademark.colorElements.length > 0) {
+      fields['mark-colorElementsHiddenCheckbox_input'] = 'on';
+      fields['mark-colorElements:valueHolder'] = trademark.colorElements.join(', ');
+    }
+
+    // Add non-Latin characters flag if specified
+    if (trademark.hasNonLatinCharacters) {
+      fields['mark-nonLatinCharactersCheckBox_input'] = 'on';
+    }
+
+    // Add trademark description if specified
+    if (trademark.description) {
+      fields['mark-description:valueHolder'] = trademark.description;
+    }
 
     await this.submitStep(fields, DPMA_VIEW_IDS.STEP_4_TO_5);
     this.log('Step 4 completed');
@@ -844,40 +1059,64 @@ export class DPMAClient {
     // Collect all checkbox IDs
     const selectedCheckboxIds: string[] = [];
 
-    // For each Nice class, expand it and select the first available term
+    // Process each Nice class selection
     for (const niceClass of niceClasses) {
       const classNum = niceClass.classNumber;
-      this.log(`Expanding Nice class ${classNum}...`);
+      const hasSpecificTerms = niceClass.terms && niceClass.terms.length > 0;
+      const selectHeader = niceClass.selectClassHeader ?? !hasSpecificTerms;
+
+      this.log(`Processing Nice class ${classNum}...`);
+      this.log(`  - Has specific terms: ${hasSpecificTerms}`);
+      this.log(`  - Select class header: ${selectHeader}`);
 
       try {
-        // Step 1: Expand the class tree to load subcategories
-        const expandResponse = await this.expandNiceClass(classNum);
+        if (hasSpecificTerms) {
+          // ========================================================
+          // TERM-BASED SELECTION: Search and select specific terms
+          // ========================================================
+          this.log(`Selecting ${niceClass.terms!.length} specific terms for class ${classNum}...`);
 
-        // Step 2: Parse the response to find checkbox IDs
-        const checkboxId = this.findFirstCheckboxId(expandResponse, classNum);
+          const termCheckboxIds = await this.selectNiceTermsBySearch(niceClass.terms!);
+          selectedCheckboxIds.push(...termCheckboxIds);
 
-        if (checkboxId) {
-          this.log(`Found checkbox for class ${classNum}: ${checkboxId}`);
-          selectedCheckboxIds.push(checkboxId);
+          this.log(`Successfully selected ${termCheckboxIds.length}/${niceClass.terms!.length} terms`);
+        }
 
-          // CRITICAL: Trigger the checkbox change event!
-          // This registers the selection server-side and populates the lead class dropdown
-          await this.triggerCheckboxChange(checkboxId);
-        } else {
-          this.log(`Warning: Could not find checkbox for class ${classNum}, trying alternative method...`);
+        if (selectHeader || !hasSpecificTerms) {
+          // ========================================================
+          // CLASS HEADER SELECTION: Select the entire class header
+          // ========================================================
+          this.log(`Selecting class header for class ${classNum}...`);
 
-          // Alternative: Try to select at class level (group header)
-          const classCheckboxId = await this.findClassLevelCheckbox(classNum);
-          if (classCheckboxId) {
-            selectedCheckboxIds.push(classCheckboxId);
-            await this.triggerCheckboxChange(classCheckboxId);
-            this.log(`Using class-level checkbox: ${classCheckboxId}`);
+          // Step 1: Expand the class tree to load subcategories
+          const expandResponse = await this.expandNiceClass(classNum);
+
+          // Step 2: Parse the response to find checkbox IDs
+          const checkboxId = this.findFirstCheckboxId(expandResponse, classNum);
+
+          if (checkboxId) {
+            this.log(`Found checkbox for class ${classNum}: ${checkboxId}`);
+            selectedCheckboxIds.push(checkboxId);
+
+            // CRITICAL: Trigger the checkbox change event!
+            // This registers the selection server-side and populates the lead class dropdown
+            await this.triggerCheckboxChange(checkboxId);
           } else {
-            this.log(`Warning: No checkbox found for class ${classNum}`);
+            this.log(`Warning: Could not find checkbox for class ${classNum}, trying alternative method...`);
+
+            // Alternative: Try to select at class level (group header)
+            const classCheckboxId = await this.findClassLevelCheckbox(classNum);
+            if (classCheckboxId) {
+              selectedCheckboxIds.push(classCheckboxId);
+              await this.triggerCheckboxChange(classCheckboxId);
+              this.log(`Using class-level checkbox: ${classCheckboxId}`);
+            } else {
+              this.log(`Warning: No checkbox found for class ${classNum}`);
+            }
           }
         }
       } catch (error: any) {
-        this.log(`Error expanding class ${classNum}: ${error.message}`);
+        this.log(`Error processing class ${classNum}: ${error.message}`);
         // Continue with other classes
       }
     }
@@ -997,6 +1236,168 @@ export class DPMAClient {
     // For now, return the most likely pattern
     // In production, we'd need to parse the actual page HTML
     return possibleIds[0];
+  }
+
+  /**
+   * Search for Nice class terms using the DPMA search functionality
+   * This allows finding terms by name rather than relying on dynamic IDs
+   */
+  private async searchNiceTerms(searchQuery: string): Promise<string> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+
+    const url = this.buildFormUrl();
+
+    // Search button ID for Nice class search
+    const searchFields: Record<string, string> = {
+      'jakarta.faces.partial.ajax': 'true',
+      'jakarta.faces.source': 'tmclassEditorGt:tmClassEditorCenterSearchButton',
+      'jakarta.faces.partial.execute': '@all',
+      'jakarta.faces.partial.render': 'tmclassEditorGt editor-form:editor-messages',
+      'jakarta.faces.behavior.event': 'action',
+      'jakarta.faces.partial.event': 'click',
+      'tmclassEditorGt:tmClassEditorCenterSearchButton': 'tmclassEditorGt:tmClassEditorCenterSearchButton',
+      'editor-form': 'editor-form',
+      'tmclassEditorGt:tmClassEditorCenterSearchPhrase': searchQuery,
+      'jakarta.faces.ViewState': this.session.tokens.viewState,
+      'jakarta.faces.ClientWindow': this.session.tokens.clientWindow,
+      'primefaces.nonce': this.session.tokens.primefacesNonce,
+    };
+
+    const body = this.createUrlEncodedBody(searchFields);
+
+    const response = await this.client.post(url, body, {
+      headers: {
+        ...AJAX_HEADERS,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Referer': `${BASE_URL}${url}`,
+      },
+    });
+
+    // Update ViewState if present in response
+    if (response.data && typeof response.data === 'string') {
+      const viewStateMatch = response.data.match(/jakarta\.faces\.ViewState[^>]*>(?:<!\[CDATA\[)?([^<\]]+)/);
+      if (viewStateMatch) {
+        this.session.tokens.viewState = viewStateMatch[1];
+      }
+    }
+
+    return response.data;
+  }
+
+  /**
+   * Find checkbox IDs matching specific term names from the AJAX response
+   * Returns a map of term name -> checkbox ID
+   */
+  private findCheckboxesByTermNames(htmlResponse: string, termNames: string[]): Map<string, string> {
+    const results = new Map<string, string>();
+
+    // Pattern to find checkbox inputs with their associated link titles
+    // The HTML structure is: checkbox input followed by a link with title attribute
+    // Pattern: name="tmclassEditorGt:...:selectBox_input" ... title="Term Name"
+    const termPattern = /name="(tmclassEditorGt:[^"]+:selectBox_input)"[^>]*>[^<]*<[^>]*title="([^"]+)"/g;
+
+    let match;
+    while ((match = termPattern.exec(htmlResponse)) !== null) {
+      const checkboxId = match[1];
+      const title = match[2];
+
+      // Check if this title matches any of the requested terms
+      for (const termName of termNames) {
+        if (title === termName || title.startsWith(termName)) {
+          results.set(termName, checkboxId);
+          this.log(`Found checkbox for term "${termName}": ${checkboxId}`);
+          break;
+        }
+      }
+    }
+
+    // Alternative pattern: look for checkbox ID and nearby termViewLink with title
+    // Structure: selectBox_input ... termViewLink" title="..."
+    const altPattern = /(tmclassEditorGt:[^"]+:selectBox_input)[^]*?termViewLink"[^>]*title="([^"]+)"/g;
+    while ((match = altPattern.exec(htmlResponse)) !== null) {
+      const checkboxId = match[1];
+      const title = match[2];
+
+      for (const termName of termNames) {
+        if (!results.has(termName) && (title === termName || title.startsWith(termName))) {
+          results.set(termName, checkboxId);
+          this.log(`Found checkbox (alt) for term "${termName}": ${checkboxId}`);
+          break;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Select Nice class terms by searching for them and triggering checkbox selection
+   * This is the main method for term-based selection
+   */
+  private async selectNiceTermsBySearch(terms: string[]): Promise<string[]> {
+    const selectedCheckboxIds: string[] = [];
+
+    // Group terms that might be found with a single search
+    // For efficiency, we batch similar terms
+    for (const term of terms) {
+      this.log(`Searching for term: "${term}"...`);
+
+      try {
+        // Search for the term
+        const searchResponse = await this.searchNiceTerms(term);
+
+        // Find the checkbox ID matching this term
+        const checkboxMap = this.findCheckboxesByTermNames(searchResponse, [term]);
+
+        if (checkboxMap.has(term)) {
+          const checkboxId = checkboxMap.get(term)!;
+          selectedCheckboxIds.push(checkboxId);
+
+          // Trigger the checkbox selection
+          await this.triggerCheckboxChange(checkboxId);
+          this.log(`Selected term "${term}" with checkbox: ${checkboxId}`);
+        } else {
+          this.log(`Warning: Could not find checkbox for term "${term}"`);
+
+          // Try a partial match - expand the class and look for the term
+          const partialMatch = this.findPartialMatchCheckbox(searchResponse, term);
+          if (partialMatch) {
+            selectedCheckboxIds.push(partialMatch);
+            await this.triggerCheckboxChange(partialMatch);
+            this.log(`Selected term "${term}" with partial match: ${partialMatch}`);
+          }
+        }
+      } catch (error: any) {
+        this.log(`Error selecting term "${term}": ${error.message}`);
+      }
+    }
+
+    return selectedCheckboxIds;
+  }
+
+  /**
+   * Try to find a checkbox by partial term match in the response
+   */
+  private findPartialMatchCheckbox(htmlResponse: string, termName: string): string | null {
+    // Normalize the term name for matching
+    const normalizedTerm = termName.toLowerCase();
+
+    // Look for any checkbox whose title contains the term
+    const pattern = /name="(tmclassEditorGt:[^"]+:selectBox_input)"[^]*?title="([^"]+)"/g;
+
+    let match;
+    while ((match = pattern.exec(htmlResponse)) !== null) {
+      const checkboxId = match[1];
+      const title = match[2].toLowerCase();
+
+      if (title.includes(normalizedTerm)) {
+        return checkboxId;
+      }
+    }
+
+    return null;
   }
 
   /**
