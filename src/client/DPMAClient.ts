@@ -505,9 +505,32 @@ export class DPMAClient {
     } else {
       const legal = applicant as LegalEntityApplicant;
       fields['daf-applicant:addressEntityType'] = 'legal';
-      fields['daf-applicant:organisationName:valueHolder'] = legal.companyName;
+      // For legal entities, company name goes into lastName field (Firmenname)
+      fields['daf-applicant:lastName:valueHolder'] = legal.companyName;
+      // Legal form goes into namePrefix field (Rechtsform/Gesellschaftsform)
+      // This is an editable dropdown with TWO inputs: _input (select) and _editableInput (text)
       if (legal.legalForm) {
-        fields['daf-applicant:legalForm:valueHolder'] = legal.legalForm;
+        // Map common abbreviations to full DPMA dropdown values
+        const legalFormMap: Record<string, string> = {
+          'GmbH': 'Gesellschaft mit beschränkter Haftung (GmbH)',
+          'AG': 'Aktiengesellschaft (AG)',
+          'UG': 'Unternehmergesellschaft, haftungsbeschränkt (UG)',
+          'KG': 'Kommanditgesellschaft (KG)',
+          'OHG': 'Offene Handelsgesellschaft (oHG)',
+          'oHG': 'Offene Handelsgesellschaft (oHG)',
+          'GbR': 'Gesellschaft bürgerlichen Rechts (GbR)',
+          'eG': 'eingetragene Genossenschaft (eG)',
+          'eV': 'eingetragener Verein (eV)',
+          'e.V.': 'eingetragener Verein (eV)',
+          'SE': 'europäische Gesellschaft (SE)',
+          'KGaA': 'Kommanditgesellschaft auf Aktien (KGaA)',
+          'PartG': 'Partnerschaftsgesellschaft (PartG)',
+          'PartGmbB': 'Partnerschaftsgesellschaft mit beschränkter Berufshaftung (PartGmbB)',
+        };
+        const mappedForm = legalFormMap[legal.legalForm] || legal.legalForm;
+        // Set both the hidden select AND the visible editable input
+        fields['daf-applicant:namePrefix:valueHolder_input'] = mappedForm;
+        fields['daf-applicant:namePrefix:valueHolder_editableInput'] = mappedForm;
       }
       fields['daf-applicant:street:valueHolder'] = legal.address.street;
       if (legal.address.addressLine1) {
@@ -545,13 +568,12 @@ export class DPMAClient {
   /**
    * Step 3: Submit delivery address (Zustelladresse)
    *
-   * This step requires full address information, not just email.
-   * Supports two modes:
-   * 1. If deliveryAddress is provided and copyFromApplicant is NOT true → use deliveryAddress
-   * 2. Otherwise → copy from applicant (backwards compatible behavior)
+   * This step uses the "Adresse übernehmen" dropdown to copy from the applicant.
+   * This is the simplest and most reliable approach as discovered via Chrome DevTools.
    *
-   * IMPORTANT: The country field uses ISO codes (DE, AT, etc.), NOT display names!
-   * All fields must be sent, even if empty, to match browser behavior.
+   * Supports two modes:
+   * 1. If deliveryAddress is provided and copyFromApplicant is NOT true → use deliveryAddress (manual fill)
+   * 2. Otherwise → copy from applicant via dropdown selection (recommended)
    */
   async submitDeliveryAddress(request: TrademarkRegistrationRequest): Promise<void> {
     this.log('Step 3: Submitting delivery address...');
@@ -561,93 +583,295 @@ export class DPMAClient {
     // Determine if we should use a separate delivery address or copy from applicant
     const useDeliveryAddress = deliveryAddress && !deliveryAddress.copyFromApplicant;
 
-    // Get the source data
-    const entityType = useDeliveryAddress ? deliveryAddress.type : applicant.type;
-    const address = useDeliveryAddress ? deliveryAddress.address : applicant.address;
-    const contactEmail = useDeliveryAddress ? deliveryAddress.contact.email : email;
-    const contactPhone = useDeliveryAddress ? (deliveryAddress.contact.telephone || '') : '';
-    const contactFax = useDeliveryAddress ? (deliveryAddress.contact.fax || '') : '';
+    if (useDeliveryAddress) {
+      // Manual fill mode - use provided delivery address
+      await this.submitDeliveryAddressManual(request);
+    } else {
+      // Copy from applicant mode - use dropdown to auto-populate
+      await this.submitDeliveryAddressFromApplicant(request);
+    }
 
-    // Build delivery address fields - must match browser exactly
-    // All fields must be included, even empty ones
+    this.log('Step 3 completed');
+  }
+
+  /**
+   * Submit delivery address by copying from applicant via dropdown
+   * This triggers the "Adresse übernehmen" dropdown to auto-populate fields
+   */
+  private async submitDeliveryAddressFromApplicant(request: TrademarkRegistrationRequest): Promise<void> {
+    const { applicant, email } = request;
+
+    // Construct the dropdown value based on applicant type
+    // Format: "1 Anmelder {Name} " where Name is company name or last name
+    // IMPORTANT: The DPMA dropdown values have a trailing space!
+    let applicantName: string;
+    if (applicant.type === ApplicantType.NATURAL) {
+      const natural = applicant as NaturalPersonApplicant;
+      applicantName = natural.lastName;
+    } else {
+      const legal = applicant as LegalEntityApplicant;
+      applicantName = legal.companyName;
+    }
+    // Note the trailing space - this matches the DPMA dropdown option value exactly
+    const dropdownValue = `1 Anmelder ${applicantName} `;
+
+    this.log(`Step 3: Selecting applicant from dropdown: "${dropdownValue}"`);
+
+    // Step 1: Trigger dropdown change to select the applicant
+    // This auto-populates all address fields from the applicant data
+    await this.triggerDeliveryAddressDropdown(dropdownValue);
+
+    // Step 2: Submit the form with ALL fields
+    // Even though dropdown auto-populates, we must include all fields in submission
+    // because the form submission needs complete data
+    const address = applicant.address;
+
     const fields: Record<string, string> = {
-      // Navigation fields
       'dpmaViewItemIndex': '0',
-
-      // Address selection dropdown
-      'daf-correspondence:address-ref-combo-a:valueHolder_input': 'Neue Adresse',
-
-      // Address type (natural or legal person)
-      'daf-correspondence:addressEntityType': entityType === 'natural' ? 'natural' : 'legal',
-
-      // Name prefix fields (all three must be sent)
-      'daf-correspondence:namePrefix:valueHolder_focus': '',
-      'daf-correspondence:namePrefix:valueHolder_input': '',
-      'daf-correspondence:namePrefix:valueHolder_editableInput': ' ',
-
-      // Name suffix
-      'daf-correspondence:nameSuffix:valueHolder': '',
-
-      // Address fields
+      'daf-correspondence:address-ref-combo-a:valueHolder_input': dropdownValue,
+      'daf-correspondence:addressEntityType': applicant.type === ApplicantType.NATURAL ? 'natural' : 'legal',
       'daf-correspondence:street:valueHolder': address.street,
       'daf-correspondence:addressLine1:valueHolder': address.addressLine1 || '',
       'daf-correspondence:addressLine2:valueHolder': address.addressLine2 || '',
       'daf-correspondence:mailbox:valueHolder': '',
       'daf-correspondence:zip:valueHolder': address.zip,
       'daf-correspondence:city:valueHolder': address.city,
-      // IMPORTANT: Use ISO country code, NOT display name!
-      'daf-correspondence:country:valueHolder_input': address.country,
-
-      // Contact fields
-      'daf-correspondence:phone:valueHolder': contactPhone,
-      'daf-correspondence:fax:valueHolder': contactFax,
-      'daf-correspondence:email:valueHolder': contactEmail,
-
-      // Panel state
+      'daf-correspondence:country:valueHolder_input': address.country, // ISO code like "DE"
+      'daf-correspondence:phone:valueHolder': '',
+      'daf-correspondence:fax:valueHolder': '',
+      'daf-correspondence:email:valueHolder': email,
       'editorPanel_active': 'null',
     };
 
     // Add name fields based on entity type
-    if (entityType === 'natural') {
-      if (useDeliveryAddress) {
-        // Use delivery address name fields
-        fields['daf-correspondence:lastName:valueHolder'] = deliveryAddress.lastName;
-        fields['daf-correspondence:firstName:valueHolder'] = deliveryAddress.firstName || '';
-        if (deliveryAddress.salutation) {
-          fields['daf-correspondence:namePrefix:valueHolder_input'] = deliveryAddress.salutation;
-          fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = deliveryAddress.salutation;
-        }
+    if (applicant.type === ApplicantType.NATURAL) {
+      const natural = applicant as NaturalPersonApplicant;
+      fields['daf-correspondence:lastName:valueHolder'] = natural.lastName;
+      fields['daf-correspondence:firstName:valueHolder'] = natural.firstName;
+      if (natural.salutation) {
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = natural.salutation;
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = natural.salutation;
       } else {
-        // Copy from natural person applicant
-        const naturalApplicant = applicant as NaturalPersonApplicant;
-        fields['daf-correspondence:lastName:valueHolder'] = naturalApplicant.lastName;
-        fields['daf-correspondence:firstName:valueHolder'] = naturalApplicant.firstName;
-        if (naturalApplicant.salutation) {
-          fields['daf-correspondence:namePrefix:valueHolder_input'] = naturalApplicant.salutation;
-          fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = naturalApplicant.salutation;
-        }
+        fields['daf-correspondence:namePrefix:valueHolder_focus'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = ' ';
       }
+      fields['daf-correspondence:nameSuffix:valueHolder'] = '';
     } else {
-      // Legal entity
-      if (useDeliveryAddress) {
-        // Use delivery address company fields
-        fields['daf-correspondence:companyName:valueHolder'] = deliveryAddress.companyName || '';
-        if (deliveryAddress.legalForm) {
-          fields['daf-correspondence:legalForm:valueHolder'] = deliveryAddress.legalForm;
-        }
+      const legal = applicant as LegalEntityApplicant;
+      // For legal entity, company name goes into lastName field
+      fields['daf-correspondence:lastName:valueHolder'] = legal.companyName;
+      // Legal form goes into namePrefix editable dropdown
+      if (legal.legalForm) {
+        const legalFormMap: Record<string, string> = {
+          'GmbH': 'Gesellschaft mit beschränkter Haftung (GmbH)',
+          'AG': 'Aktiengesellschaft (AG)',
+          'UG': 'Unternehmergesellschaft, haftungsbeschränkt (UG)',
+          'KG': 'Kommanditgesellschaft (KG)',
+          'OHG': 'Offene Handelsgesellschaft (oHG)',
+          'oHG': 'Offene Handelsgesellschaft (oHG)',
+          'GbR': 'Gesellschaft bürgerlichen Rechts (GbR)',
+          'eG': 'eingetragene Genossenschaft (eG)',
+          'eV': 'eingetragener Verein (eV)',
+          'e.V.': 'eingetragener Verein (eV)',
+          'SE': 'europäische Gesellschaft (SE)',
+        };
+        const mappedForm = legalFormMap[legal.legalForm] || legal.legalForm;
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = mappedForm;
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = mappedForm;
       } else {
-        // Copy from legal entity applicant
-        const legalApplicant = applicant as LegalEntityApplicant;
-        fields['daf-correspondence:companyName:valueHolder'] = legalApplicant.companyName;
-        if (legalApplicant.legalForm) {
-          fields['daf-correspondence:legalForm:valueHolder'] = legalApplicant.legalForm;
-        }
+        fields['daf-correspondence:namePrefix:valueHolder_focus'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = ' ';
       }
     }
 
-    this.log(`Step 3: Using ${useDeliveryAddress ? 'separate delivery address' : 'applicant address'} (${entityType})`);
+    this.log(`Step 3: Using applicant address via dropdown (${applicant.type})`);
     await this.submitStep(fields, DPMA_VIEW_IDS.STEP_3_TO_4);
-    this.log('Step 3 completed');
+  }
+
+  /**
+   * Trigger the delivery address dropdown change to copy from applicant
+   */
+  private async triggerDeliveryAddressDropdown(dropdownValue: string): Promise<void> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+
+    this.log(`Triggering delivery address dropdown with value: ${dropdownValue}`);
+
+    const fields: Record<string, string> = {
+      'jakarta.faces.partial.ajax': 'true',
+      'jakarta.faces.source': 'daf-correspondence:address-ref-combo-a:valueHolder',
+      'jakarta.faces.behavior.event': 'change',
+      'jakarta.faces.partial.execute': 'editor-form',
+      'jakarta.faces.partial.render': 'editor-form',
+      'daf-correspondence:address-ref-combo-a:valueHolder_input': dropdownValue,
+      'editor-form': 'editor-form',
+      'dpmaViewItemIndex': '0',
+      'editorPanel_active': 'null',
+      'jakarta.faces.ViewState': this.session.tokens.viewState,
+      'jakarta.faces.ClientWindow': this.session.tokens.clientWindow,
+      'primefaces.nonce': this.session.tokens.primefacesNonce,
+    };
+
+    const body = this.createUrlEncodedBody(fields);
+    const url = this.buildFormUrl();
+
+    const response = await this.client.post(url, body, {
+      headers: {
+        ...AJAX_HEADERS,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Referer': `${BASE_URL}${url}`,
+      },
+    });
+
+    // Update tokens from response
+    if (response.data && typeof response.data === 'string') {
+      this.lastResponseHtml = response.data;
+      this.saveDebugFile('delivery_address_dropdown.xml', response.data);
+      this.updateTokensFromResponse(response.data);
+    }
+
+    this.log('Delivery address dropdown change triggered successfully');
+  }
+
+  /**
+   * Submit delivery address with manual field entry (for custom delivery addresses)
+   *
+   * IMPORTANT: Field names discovered via Chrome DevTools:
+   * - For legal entities: Company name uses lastName field (same pattern as applicant)
+   * - Legal form uses namePrefix editable dropdown (same pattern as applicant)
+   */
+  private async submitDeliveryAddressManual(request: TrademarkRegistrationRequest): Promise<void> {
+    const { deliveryAddress } = request;
+
+    if (!deliveryAddress) {
+      throw new Error('deliveryAddress is required for manual mode');
+    }
+
+    const entityType = deliveryAddress.type;
+    const address = deliveryAddress.address;
+    const contactEmail = deliveryAddress.contact.email;
+    const contactPhone = deliveryAddress.contact.telephone || '';
+    const contactFax = deliveryAddress.contact.fax || '';
+
+    // First, trigger a radio button change to set entity type (required for form to show correct fields)
+    await this.triggerDeliveryAddressEntityTypeChange(entityType);
+
+    // Build delivery address fields - must match browser exactly
+    const fields: Record<string, string> = {
+      'dpmaViewItemIndex': '0',
+      'daf-correspondence:address-ref-combo-a:valueHolder_input': 'Neue Adresse',
+      'daf-correspondence:addressEntityType': entityType === 'natural' ? 'natural' : 'legal',
+      'daf-correspondence:street:valueHolder': address.street,
+      'daf-correspondence:addressLine1:valueHolder': address.addressLine1 || '',
+      'daf-correspondence:addressLine2:valueHolder': address.addressLine2 || '',
+      'daf-correspondence:mailbox:valueHolder': '',
+      'daf-correspondence:zip:valueHolder': address.zip,
+      'daf-correspondence:city:valueHolder': address.city,
+      'daf-correspondence:country:valueHolder_input': address.country,
+      'daf-correspondence:phone:valueHolder': contactPhone,
+      'daf-correspondence:fax:valueHolder': contactFax,
+      'daf-correspondence:email:valueHolder': contactEmail,
+      'editorPanel_active': 'null',
+    };
+
+    // Add name fields based on entity type
+    // IMPORTANT: Field names are same structure as applicant form!
+    if (entityType === 'natural') {
+      // Natural person: lastName, firstName, optional salutation
+      fields['daf-correspondence:lastName:valueHolder'] = deliveryAddress.lastName;
+      fields['daf-correspondence:firstName:valueHolder'] = deliveryAddress.firstName || '';
+      fields['daf-correspondence:nameSuffix:valueHolder'] = '';
+      if (deliveryAddress.salutation) {
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = deliveryAddress.salutation;
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = deliveryAddress.salutation;
+      } else {
+        fields['daf-correspondence:namePrefix:valueHolder_focus'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = ' ';
+      }
+    } else {
+      // Legal entity: Company name goes into lastName field (Firmenname)
+      // Legal form goes into namePrefix editable dropdown (Rechtsform)
+      fields['daf-correspondence:lastName:valueHolder'] = deliveryAddress.companyName || '';
+
+      if (deliveryAddress.legalForm) {
+        // Map common abbreviations to full DPMA dropdown values
+        const legalFormMap: Record<string, string> = {
+          'GmbH': 'Gesellschaft mit beschränkter Haftung (GmbH)',
+          'AG': 'Aktiengesellschaft (AG)',
+          'UG': 'Unternehmergesellschaft, haftungsbeschränkt (UG)',
+          'KG': 'Kommanditgesellschaft (KG)',
+          'OHG': 'Offene Handelsgesellschaft (oHG)',
+          'oHG': 'Offene Handelsgesellschaft (oHG)',
+          'GbR': 'Gesellschaft bürgerlichen Rechts (GbR)',
+          'eG': 'eingetragene Genossenschaft (eG)',
+          'eV': 'eingetragener Verein (eV)',
+          'e.V.': 'eingetragener Verein (eV)',
+          'SE': 'europäische Gesellschaft (SE)',
+        };
+        const mappedForm = legalFormMap[deliveryAddress.legalForm] || deliveryAddress.legalForm;
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = mappedForm;
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = mappedForm;
+      } else {
+        fields['daf-correspondence:namePrefix:valueHolder_focus'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_input'] = '';
+        fields['daf-correspondence:namePrefix:valueHolder_editableInput'] = ' ';
+      }
+    }
+
+    this.log(`Step 3: Using separate delivery address (${entityType})`);
+    await this.submitStep(fields, DPMA_VIEW_IDS.STEP_3_TO_4);
+  }
+
+  /**
+   * Trigger entity type change for delivery address form
+   * This ensures the correct form fields are displayed
+   */
+  private async triggerDeliveryAddressEntityTypeChange(entityType: string): Promise<void> {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+
+    const radioValue = entityType === 'natural' ? 'natural' : 'legal';
+    this.log(`Triggering delivery address entity type change: ${radioValue}`);
+
+    const fields: Record<string, string> = {
+      'jakarta.faces.partial.ajax': 'true',
+      'jakarta.faces.source': 'daf-correspondence:addressEntityType',
+      'jakarta.faces.behavior.event': 'change',
+      'jakarta.faces.partial.execute': 'editor-form',
+      'jakarta.faces.partial.render': 'editor-form',
+      'daf-correspondence:addressEntityType': radioValue,
+      'daf-correspondence:address-ref-combo-a:valueHolder_input': 'Neue Adresse',
+      'editor-form': 'editor-form',
+      'dpmaViewItemIndex': '0',
+      'editorPanel_active': 'null',
+      'jakarta.faces.ViewState': this.session.tokens.viewState,
+      'jakarta.faces.ClientWindow': this.session.tokens.clientWindow,
+      'primefaces.nonce': this.session.tokens.primefacesNonce,
+    };
+
+    const body = this.createUrlEncodedBody(fields);
+    const url = this.buildFormUrl();
+
+    const response = await this.client.post(url, body, {
+      headers: {
+        ...AJAX_HEADERS,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Referer': `${BASE_URL}${url}`,
+      },
+    });
+
+    if (response.data && typeof response.data === 'string') {
+      this.lastResponseHtml = response.data;
+      this.saveDebugFile('delivery_entity_type_change.xml', response.data);
+      this.updateTokensFromResponse(response.data);
+    }
+
+    this.log('Delivery address entity type change triggered successfully');
   }
 
   /**
@@ -791,7 +1015,8 @@ export class DPMAClient {
 
     // Step 2: Upload the actual file via multipart/form-data
     // The upload endpoint is w7005-upload.xhtml
-    const uploadUrl = `${EDITOR_PATH}/w7005/w7005-upload.xhtml?jfwid=${this.session.jfwid}`;
+    // IMPORTANT: Use full ClientWindow value (with counter suffix), not base jfwid
+    const uploadUrl = `${EDITOR_PATH}/w7005/w7005-upload.xhtml?jfwid=${this.session.tokens.clientWindow}`;
 
     // Create form data for file upload
     const formData = new FormData();
@@ -1249,23 +1474,26 @@ export class DPMAClient {
 
     const url = this.buildFormUrl();
 
-    // Search button ID for Nice class search
+    // Search request - discovered via Chrome DevTools network capture
+    // The correct source is tmclassEditorGt:searchWDVZ (NOT tmClassEditorCenterSearchButton)
     const searchFields: Record<string, string> = {
       'jakarta.faces.partial.ajax': 'true',
-      'jakarta.faces.source': 'tmclassEditorGt:tmClassEditorCenterSearchButton',
-      'jakarta.faces.partial.execute': '@all',
-      'jakarta.faces.partial.render': 'tmclassEditorGt editor-form:editor-messages',
-      'jakarta.faces.behavior.event': 'action',
-      'jakarta.faces.partial.event': 'click',
-      'tmclassEditorGt:tmClassEditorCenterSearchButton': 'tmclassEditorGt:tmClassEditorCenterSearchButton',
+      'jakarta.faces.source': 'tmclassEditorGt:searchWDVZ',
+      'jakarta.faces.partial.execute': 'tmclassEditorGt',
+      'jakarta.faces.partial.render': 'tmclassEditorGt:nodeTreeAndTermView',
+      'tmclassEditorGt:searchWDVZ': 'tmclassEditorGt:searchWDVZ',
       'editor-form': 'editor-form',
       'tmclassEditorGt:tmClassEditorCenterSearchPhrase': searchQuery,
+      'tmclassEditorGt:j_idt932_active': 'null',
+      'editorPanel_active': 'null',
       'jakarta.faces.ViewState': this.session.tokens.viewState,
       'jakarta.faces.ClientWindow': this.session.tokens.clientWindow,
       'primefaces.nonce': this.session.tokens.primefacesNonce,
     };
 
     const body = this.createUrlEncodedBody(searchFields);
+
+    this.log(`Searching Nice terms for: "${searchQuery}"`);
 
     const response = await this.client.post(url, body, {
       headers: {
@@ -1281,6 +1509,11 @@ export class DPMAClient {
       if (viewStateMatch) {
         this.session.tokens.viewState = viewStateMatch[1];
       }
+
+      // Debug: Save search response
+      if (this.debug) {
+        this.saveDebugFile(`search_${searchQuery.replace(/[^a-zA-Z0-9]/g, '_')}.xml`, response.data);
+      }
     }
 
     return response.data;
@@ -1289,23 +1522,31 @@ export class DPMAClient {
   /**
    * Find checkbox IDs matching specific term names from the AJAX response
    * Returns a map of term name -> checkbox ID
+   *
+   * DPMA HTML Structure discovered via Chrome DevTools:
+   * - Links have: id="tmclassEditorGt:...:termViewLink" title="Term Name"
+   * - Checkbox ID is: same prefix with selectBox_input instead of termViewLink
+   * Example:
+   *   Link: id="tmclassEditorGt:tmclassNode_9:j_idt2344:j_idt7316:j_idt8952:termViewLink" title="Anwendungssoftware"
+   *   Checkbox: name="tmclassEditorGt:tmclassNode_9:j_idt2344:j_idt7316:j_idt8952:selectBox_input"
    */
   private findCheckboxesByTermNames(htmlResponse: string, termNames: string[]): Map<string, string> {
     const results = new Map<string, string>();
 
-    // Pattern to find checkbox inputs with their associated link titles
-    // The HTML structure is: checkbox input followed by a link with title attribute
-    // Pattern: name="tmclassEditorGt:...:selectBox_input" ... title="Term Name"
-    const termPattern = /name="(tmclassEditorGt:[^"]+:selectBox_input)"[^>]*>[^<]*<[^>]*title="([^"]+)"/g;
+    // Primary pattern: Find links with termViewLink in ID and title attribute
+    // id="(prefix):termViewLink"... title="Term Name"
+    const termViewLinkPattern = /id="(tmclassEditorGt:[^"]+):termViewLink"[^>]*title="([^"]+)"/g;
 
     let match;
-    while ((match = termPattern.exec(htmlResponse)) !== null) {
-      const checkboxId = match[1];
+    while ((match = termViewLinkPattern.exec(htmlResponse)) !== null) {
+      const prefix = match[1];
       const title = match[2];
 
       // Check if this title matches any of the requested terms
       for (const termName of termNames) {
         if (title === termName || title.startsWith(termName)) {
+          // Derive checkbox ID from the prefix
+          const checkboxId = `${prefix}:selectBox_input`;
           results.set(termName, checkboxId);
           this.log(`Found checkbox for term "${termName}": ${checkboxId}`);
           break;
@@ -1313,19 +1554,31 @@ export class DPMAClient {
       }
     }
 
-    // Alternative pattern: look for checkbox ID and nearby termViewLink with title
-    // Structure: selectBox_input ... termViewLink" title="..."
-    const altPattern = /(tmclassEditorGt:[^"]+:selectBox_input)[^]*?termViewLink"[^>]*title="([^"]+)"/g;
+    // Alternative pattern: Sometimes the title might be escaped or have different attribute order
+    // title="Term Name"... id="(prefix):termViewLink"
+    const altPattern = /title="([^"]+)"[^>]*id="(tmclassEditorGt:[^"]+):termViewLink"/g;
     while ((match = altPattern.exec(htmlResponse)) !== null) {
-      const checkboxId = match[1];
-      const title = match[2];
+      const title = match[1];
+      const prefix = match[2];
 
       for (const termName of termNames) {
         if (!results.has(termName) && (title === termName || title.startsWith(termName))) {
+          const checkboxId = `${prefix}:selectBox_input`;
           results.set(termName, checkboxId);
           this.log(`Found checkbox (alt) for term "${termName}": ${checkboxId}`);
           break;
         }
+      }
+    }
+
+    // Debug: Log what we found in the response if no results
+    if (results.size === 0 && termNames.length > 0) {
+      this.log('DEBUG: No term checkboxes found. Looking for termViewLink patterns...');
+      const debugPattern = /id="(tmclassEditorGt:[^"]+:termViewLink)"[^>]*title="([^"]{0,50})"/g;
+      let count = 0;
+      while ((match = debugPattern.exec(htmlResponse)) !== null && count < 5) {
+        this.log(`  Found link: ${match[1]} -> "${match[2]}"`);
+        count++;
       }
     }
 
@@ -1379,21 +1632,23 @@ export class DPMAClient {
 
   /**
    * Try to find a checkbox by partial term match in the response
+   * Uses termViewLink pattern to find links and derive checkbox IDs
    */
   private findPartialMatchCheckbox(htmlResponse: string, termName: string): string | null {
     // Normalize the term name for matching
     const normalizedTerm = termName.toLowerCase();
 
-    // Look for any checkbox whose title contains the term
-    const pattern = /name="(tmclassEditorGt:[^"]+:selectBox_input)"[^]*?title="([^"]+)"/g;
+    // Look for termViewLink with title containing the term
+    const pattern = /id="(tmclassEditorGt:[^"]+):termViewLink"[^>]*title="([^"]+)"/g;
 
     let match;
     while ((match = pattern.exec(htmlResponse)) !== null) {
-      const checkboxId = match[1];
+      const prefix = match[1];
       const title = match[2].toLowerCase();
 
       if (title.includes(normalizedTerm)) {
-        return checkboxId;
+        // Derive checkbox ID from prefix
+        return `${prefix}:selectBox_input`;
       }
     }
 
