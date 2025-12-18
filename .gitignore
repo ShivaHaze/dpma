@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Debug files
+debug_*.xml
+debug_*.html
+*.log
+
+# Test artifacts
+last_response.json
+receipt.pdf
+test_*.json
+nul
+
+# Receipts folder (contains downloaded PDFs)
+receipts/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript cache
+*.tsbuildinfo
+
+# NCL classification data (large XML files - download separately)
+ncl-*.xml
