@@ -916,7 +916,7 @@ The Nice classification step is the most complex step in the form. It involves:
 
 ### Taxonomy Data Structure
 
-The Nice classification is stored locally in `docs/taxonomyDe.json` with the following structure:
+The Nice classification is stored locally in `src/data/taxonomyDe.json` with the following structure:
 
 ```json
 {

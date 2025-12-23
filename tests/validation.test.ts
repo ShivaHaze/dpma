@@ -552,4 +552,463 @@ describe('validateTrademarkRequest', () => {
       expect(result.errors.length).toBeGreaterThan(3);
     });
   });
+
+  // ===========================================================================
+  // Additional Edge Cases and Comprehensive Tests
+  // ===========================================================================
+
+  describe('3D Trademark Validation', () => {
+    it('should accept valid 3D mark with imageData', () => {
+      const req = createValidRequest();
+      req.trademark = {
+        type: TrademarkType.THREE_DIMENSIONAL,
+        imageData: Buffer.from('3d-model-data'),
+        imageMimeType: 'image/jpeg',
+        imageFileName: '3d-mark.jpg',
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept 3D mark type (validation does not require imageData)', () => {
+      // Note: Current validation does not require imageData for 3D marks
+      // (unlike figurative and combined marks). This may be intentional as
+      // 3D marks might have different requirements in the DPMA form.
+      const req = createValidRequest();
+      req.trademark = {
+        type: TrademarkType.THREE_DIMENSIONAL,
+      };
+      const result = validateTrademarkRequest(req);
+      // Currently validation passes - DPMA form handles 3D mark requirements
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('Nice Classes with Terms', () => {
+    it('should accept Nice class with specific terms', () => {
+      const req = createValidRequest();
+      req.niceClasses = [{
+        classNumber: 9,
+        terms: ['Anwendungssoftware', 'Spielsoftware'],
+      }];
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept Nice class with selectClassHeader', () => {
+      const req = createValidRequest();
+      req.niceClasses = [{
+        classNumber: 9,
+        selectClassHeader: true,
+      }];
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept multiple classes with mixed selection modes', () => {
+      const req = createValidRequest();
+      req.niceClasses = [
+        { classNumber: 9, selectClassHeader: true },
+        { classNumber: 35, terms: ['Werbung, Marketing und Verkaufsförderung'] },
+        { classNumber: 42 },
+      ];
+      req.leadClass = 9;
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject non-array niceClasses', () => {
+      const req = createValidRequest();
+      req.niceClasses = { classNumber: 9 } as any;
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'niceClasses')).toBe(true);
+    });
+
+    it('should reject non-integer class number', () => {
+      const req = createValidRequest();
+      req.niceClasses = [{ classNumber: 9.5 }];
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field.includes('classNumber'))).toBe(true);
+    });
+
+    it('should accept all 45 Nice classes', () => {
+      const req = createValidRequest();
+      req.niceClasses = Array.from({ length: 45 }, (_, i) => ({ classNumber: i + 1 }));
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('Applicant Edge Cases', () => {
+    it('should accept natural person with optional salutation', () => {
+      const req = createValidRequest();
+      req.applicant.salutation = 'Dr.';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept natural person without salutation', () => {
+      const req = createValidRequest();
+      delete req.applicant.salutation;
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept legal entity without legalForm', () => {
+      const req = createValidRequest();
+      req.applicant = {
+        type: ApplicantType.LEGAL,
+        companyName: 'Test Company',
+        address: {
+          street: 'Teststr. 1',
+          zip: '10115',
+          city: 'Berlin',
+          country: 'DE',
+        },
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept address with optional addressLine1', () => {
+      const req = createValidRequest();
+      req.applicant.address.addressLine1 = 'Gebäude A';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept address with optional addressLine2 for natural persons', () => {
+      const req = createValidRequest();
+      req.applicant.address.addressLine1 = 'Gebäude A';
+      req.applicant.address.addressLine2 = '3. Stock';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject empty company name (whitespace only)', () => {
+      const req = createValidRequest();
+      req.applicant = {
+        type: ApplicantType.LEGAL,
+        companyName: '   ',
+        address: {
+          street: 'Teststr. 1',
+          zip: '10115',
+          city: 'Berlin',
+          country: 'DE',
+        },
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'applicant.companyName')).toBe(true);
+    });
+
+    it('should reject empty lastName (whitespace only)', () => {
+      const req = createValidRequest();
+      req.applicant.lastName = '   ';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'applicant.lastName')).toBe(true);
+    });
+  });
+
+  describe('Address Country Variations', () => {
+    it('should accept Swiss postal codes', () => {
+      const req = createValidRequest();
+      req.applicant.address.country = 'CH';
+      req.applicant.address.zip = '8001'; // Zürich
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept French postal codes', () => {
+      const req = createValidRequest();
+      req.applicant.address.country = 'FR';
+      req.applicant.address.zip = '75001'; // Paris
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept US postal codes', () => {
+      const req = createValidRequest();
+      req.applicant.address.country = 'US';
+      req.applicant.address.zip = '10001'; // New York
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject single-letter country code', () => {
+      const req = createValidRequest();
+      req.applicant.address.country = 'D';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'applicant.address.country')).toBe(true);
+    });
+
+    it('should reject numeric country code', () => {
+      const req = createValidRequest();
+      req.applicant.address.country = '49';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'applicant.address.country')).toBe(true);
+    });
+
+    it('should reject German zip with letters', () => {
+      const req = createValidRequest();
+      req.applicant.address.zip = '8033A';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'applicant.address.zip')).toBe(true);
+    });
+
+    it('should reject German zip with 6 digits', () => {
+      const req = createValidRequest();
+      req.applicant.address.zip = '803310';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'applicant.address.zip')).toBe(true);
+    });
+  });
+
+  describe('Trademark Optional Fields', () => {
+    it('should accept word mark with colorElements', () => {
+      const req = createValidRequest();
+      req.trademark.colorElements = ['rot', 'blau', 'weiß'];
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept word mark with hasNonLatinCharacters flag', () => {
+      const req = createValidRequest();
+      req.trademark.hasNonLatinCharacters = true;
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept word mark with description', () => {
+      const req = createValidRequest();
+      req.trademark.description = 'Eine Beschreibung der Marke';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept figurative mark with all optional fields', () => {
+      const req = createValidRequest();
+      req.trademark = {
+        type: TrademarkType.FIGURATIVE,
+        imageData: Buffer.from('image-data'),
+        imageMimeType: 'image/png',
+        imageFileName: 'logo.png',
+        colorElements: ['schwarz', 'gold'],
+        hasNonLatinCharacters: false,
+        description: 'Ein stilisiertes Logo',
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('Email Edge Cases', () => {
+    it('should accept email with numbers', () => {
+      const req = createValidRequest();
+      req.email = 'user123@example123.com';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept email with dash in domain', () => {
+      const req = createValidRequest();
+      req.email = 'user@my-company.com';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept email with underscore in local part', () => {
+      const req = createValidRequest();
+      req.email = 'user_name@example.com';
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject email with spaces', () => {
+      const req = createValidRequest();
+      req.email = 'user name@example.com';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'email')).toBe(true);
+    });
+
+    it('should reject email with multiple @', () => {
+      const req = createValidRequest();
+      req.email = 'user@@example.com';
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'email')).toBe(true);
+    });
+  });
+
+  describe('SEPA Mandate Types', () => {
+    it('should accept SEPA with single mandate type', () => {
+      const req = createValidRequest();
+      req.paymentMethod = PaymentMethod.SEPA_DIRECT_DEBIT;
+      req.sepaDetails = {
+        mandateReferenceNumber: 'A9530-12345',
+        mandateType: SepaMandateType.SINGLE,
+        copyFromApplicant: true,
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept SEPA with permanent mandate type', () => {
+      const req = createValidRequest();
+      req.paymentMethod = PaymentMethod.SEPA_DIRECT_DEBIT;
+      req.sepaDetails = {
+        mandateReferenceNumber: 'A9530-67890',
+        mandateType: SepaMandateType.PERMANENT,
+        copyFromApplicant: true,
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject SEPA with empty mandate reference', () => {
+      const req = createValidRequest();
+      req.paymentMethod = PaymentMethod.SEPA_DIRECT_DEBIT;
+      req.sepaDetails = {
+        mandateReferenceNumber: '   ',
+        mandateType: SepaMandateType.PERMANENT,
+        copyFromApplicant: true,
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'sepaDetails.mandateReferenceNumber')).toBe(true);
+    });
+  });
+
+  describe('Lead Class Validation', () => {
+    it('should accept undefined lead class (defaults to first)', () => {
+      const req = createValidRequest();
+      req.niceClasses = [{ classNumber: 9 }, { classNumber: 35 }];
+      delete req.leadClass;
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject lead class 0', () => {
+      const req = createValidRequest();
+      req.niceClasses = [{ classNumber: 9 }];
+      req.leadClass = 0;
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'leadClass')).toBe(true);
+    });
+
+    it('should reject lead class 46', () => {
+      const req = createValidRequest();
+      req.niceClasses = [{ classNumber: 9 }];
+      req.leadClass = 46;
+      const result = validateTrademarkRequest(req);
+      expect(result.errors.some(e => e.field === 'leadClass')).toBe(true);
+    });
+  });
+
+  describe('Complete Request Scenarios', () => {
+    it('should accept complete natural person request with all optional fields', () => {
+      const req = {
+        applicant: {
+          type: ApplicantType.NATURAL,
+          salutation: 'Dr.',
+          firstName: 'Max',
+          lastName: 'Mustermann',
+          nameSuffix: 'Jr.',
+          address: {
+            street: 'Musterstraße 123',
+            addressLine1: 'Gebäude A',
+            addressLine2: '3. Stock',
+            zip: '80331',
+            city: 'München',
+            country: 'DE',
+          },
+        },
+        sanctions: {
+          hasRussianNationality: false,
+          hasRussianResidence: false,
+        },
+        email: 'max.mustermann@example.com',
+        trademark: {
+          type: TrademarkType.WORD,
+          text: 'TestBrand2024',
+          colorElements: ['blau', 'weiß'],
+          hasNonLatinCharacters: false,
+          description: 'Ein modernes Markenzeichen',
+        },
+        niceClasses: [
+          { classNumber: 9, terms: ['Anwendungssoftware', 'Spielsoftware'] },
+          { classNumber: 42, selectClassHeader: true },
+        ],
+        leadClass: 9,
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        senderName: 'Dr. Max Mustermann Jr.',
+        internalReference: 'INT-2024-001',
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should accept complete legal entity request', () => {
+      const req = {
+        applicant: {
+          type: ApplicantType.LEGAL,
+          companyName: 'Innovative Tech GmbH',
+          legalForm: 'GmbH',
+          address: {
+            street: 'Innovationsweg 42',
+            addressLine1: 'Technologiepark',
+            zip: '10115',
+            city: 'Berlin',
+            country: 'DE',
+          },
+        },
+        email: 'trademark@innovative-tech.de',
+        trademark: {
+          type: TrademarkType.FIGURATIVE,
+          imageData: Buffer.from('fake-image-data'),
+          imageMimeType: 'image/jpeg',
+          imageFileName: 'company-logo.jpg',
+        },
+        niceClasses: [
+          { classNumber: 9 },
+          { classNumber: 35 },
+          { classNumber: 42 },
+        ],
+        leadClass: 42,
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        senderName: 'Innovative Tech GmbH - Geschäftsführung',
+      };
+      const result = validateTrademarkRequest(req);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  describe('Validation Error Messages', () => {
+    it('should provide meaningful error message for missing applicant', () => {
+      const result = validateTrademarkRequest({
+        email: 'test@test.com',
+        trademark: { type: TrademarkType.WORD, text: 'Test' },
+        niceClasses: [{ classNumber: 9 }],
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        senderName: 'Test',
+      });
+      const applicantError = result.errors.find(e => e.field === 'applicant');
+      expect(applicantError).toBeDefined();
+      expect(applicantError?.message).toContain('required');
+    });
+
+    it('should provide meaningful error message for invalid applicant type', () => {
+      const result = validateTrademarkRequest({
+        applicant: { type: 'corporate' as any },
+        email: 'test@test.com',
+        trademark: { type: TrademarkType.WORD, text: 'Test' },
+        niceClasses: [{ classNumber: 9 }],
+        paymentMethod: PaymentMethod.BANK_TRANSFER,
+        senderName: 'Test',
+      });
+      const typeError = result.errors.find(e => e.field === 'applicant.type');
+      expect(typeError).toBeDefined();
+      expect(typeError?.message).toContain('natural');
+      expect(typeError?.message).toContain('legal');
+    });
+  });
 });

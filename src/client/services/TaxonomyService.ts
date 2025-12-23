@@ -97,12 +97,12 @@ export class TaxonomyService {
 
   /**
    * Load taxonomy from the JSON file
-   * Can be called with a custom path or uses the default docs/taxonomyDe.json
+   * Can be called with a custom path or uses the default src/data/taxonomyDe.json
    */
   async load(taxonomyPath?: string): Promise<void> {
     if (this.loaded) return;
 
-    const filePath = taxonomyPath || path.resolve(__dirname, '../../../docs/taxonomyDe.json');
+    const filePath = taxonomyPath || path.resolve(__dirname, '../../data/taxonomyDe.json');
 
     try {
       const data = fs.readFileSync(filePath, 'utf-8');

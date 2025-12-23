@@ -10,7 +10,7 @@ describe('TaxonomyService', () => {
 
   beforeAll(async () => {
     service = new TaxonomyService();
-    const taxonomyPath = path.resolve(__dirname, '../docs/taxonomyDe.json');
+    const taxonomyPath = path.resolve(__dirname, '../src/data/taxonomyDe.json');
     await service.load(taxonomyPath);
   });
 
