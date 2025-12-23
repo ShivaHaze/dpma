@@ -6,6 +6,7 @@
  * Map of common legal form abbreviations to their full DPMA dropdown values
  */
 export const LEGAL_FORM_MAP: Record<string, string> = {
+  // Common abbreviations mapped to full DPMA dropdown values
   'GmbH': 'Gesellschaft mit beschränkter Haftung (GmbH)',
   'AG': 'Aktiengesellschaft (AG)',
   'UG': 'Unternehmergesellschaft, haftungsbeschränkt (UG)',
@@ -13,6 +14,7 @@ export const LEGAL_FORM_MAP: Record<string, string> = {
   'OHG': 'Offene Handelsgesellschaft (oHG)',
   'oHG': 'Offene Handelsgesellschaft (oHG)',
   'GbR': 'Gesellschaft bürgerlichen Rechts (GbR)',
+  'eGbR': 'eingetragene Gesellschaft bürgerlichen Rechts (eGbR)',
   'eG': 'eingetragene Genossenschaft (eG)',
   'eV': 'eingetragener Verein (eV)',
   'e.V.': 'eingetragener Verein (eV)',
@@ -20,6 +22,7 @@ export const LEGAL_FORM_MAP: Record<string, string> = {
   'KGaA': 'Kommanditgesellschaft auf Aktien (KGaA)',
   'PartG': 'Partnerschaftsgesellschaft (PartG)',
   'PartGmbB': 'Partnerschaftsgesellschaft mit beschränkter Berufshaftung (PartGmbB)',
+  'Stiftung': 'Stiftung bürgerlichen Rechts',
 };
 
 /**

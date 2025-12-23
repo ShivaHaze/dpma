@@ -5,3 +5,10 @@
 export { DebugLogger, DebugLoggerOptions } from './DebugLogger';
 export { mapLegalForm, LEGAL_FORM_MAP } from './LegalFormMapper';
 export { getCountryDisplayName, COUNTRY_MAP } from './CountryMapper';
+export {
+  levenshteinDistance,
+  levenshteinSimilarity,
+  normalizeForComparison,
+  findBestMatches,
+  findClosestMatch,
+} from './LevenshteinDistance';

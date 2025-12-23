@@ -349,8 +349,12 @@ export interface TrademarkRegistrationRequest {
   /** Applicant information */
   applicant: Applicant;
 
-  /** Sanctions declaration (required for all applicants) */
-  sanctions: SanctionsDeclaration;
+  /**
+   * Russia sanctions declaration - ONLY required for Natural Person applicants.
+   * Legal Entity applicants do NOT have sanctions declaration fields on the DPMA form.
+   * This field is optional because legal entities don't need it.
+   */
+  sanctions?: SanctionsDeclaration;
 
   // =========================================================================
   // Step 2: Representative/Lawyer (Anwalt/Kanzlei) - Optional
@@ -527,6 +531,79 @@ export interface DpmaSession {
 
   /** Encrypted transaction ID (after final submit) */
   encryptedTransactionId?: string;
+}
+
+// ============================================================================
+// NICE CLASSIFICATION TAXONOMY TYPES
+// ============================================================================
+
+/**
+ * Raw taxonomy item from taxonomyDe.json
+ * Represents a node in the Nice classification hierarchy
+ */
+export interface TaxonomyItem {
+  /** German term/category name */
+  Text: string;
+  /** Nice class number (1-45), 0 for root nodes */
+  ClassNumber: number;
+  /** Unique concept identifier */
+  ConceptId: string;
+  /** Hierarchy level (0=root, 1=class, 2+=subcategory) */
+  Level: number;
+  /** Child items (null for leaf nodes) */
+  Items: TaxonomyItem[] | null;
+  /** Total number of leaf terms under this node */
+  ItemsSize: number;
+}
+
+/**
+ * Flattened taxonomy entry for indexed lookup
+ */
+export interface TaxonomyEntry {
+  /** The term text (German) */
+  text: string;
+  /** Normalized text for search (lowercase, no special chars) */
+  normalizedText: string;
+  /** Nice class number (1-45) */
+  classNumber: number;
+  /** Unique concept ID */
+  conceptId: string;
+  /** Hierarchy level */
+  level: number;
+  /** Full path from root (e.g., ["Klasse 9", "Software", "Anwendungssoftware"]) */
+  path: string[];
+  /** Number of sub-terms (0 for leaf nodes) */
+  childCount: number;
+  /** Whether this is a selectable leaf term */
+  isLeaf: boolean;
+}
+
+/**
+ * Result from taxonomy validation
+ */
+export interface TaxonomyValidationResult {
+  /** Whether the term was found */
+  found: boolean;
+  /** The matched entry (if found) */
+  entry?: TaxonomyEntry;
+  /** Suggested alternatives (if not found or partial match) */
+  suggestions?: TaxonomyEntry[];
+  /** Error message if validation failed */
+  error?: string;
+}
+
+/**
+ * Search options for taxonomy lookup
+ */
+export interface TaxonomySearchOptions {
+  /** Limit results to specific Nice class(es) */
+  classNumbers?: number[];
+  /** Only return leaf nodes (actual selectable terms) */
+  leafOnly?: boolean;
+  /** Maximum number of results */
+  limit?: number;
+  /** Minimum match score (0-1) for fuzzy search */
+  minScore?: number;
 }
 
 /** DPMA Versand API response */

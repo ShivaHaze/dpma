@@ -101,6 +101,8 @@ curl -X POST http://localhost:3000/api/trademark/register \
 
 ### Complete Example (Legal Entity / Company)
 
+**Note:** Legal entities do NOT require the `sanctions` declaration - it only applies to natural persons.
+
 ```bash
 curl -X POST http://localhost:3000/api/trademark/register \
   -H "Content-Type: application/json" \
@@ -117,10 +119,6 @@ curl -X POST http://localhost:3000/api/trademark/register \
       }
     },
     "email": "legal@muster-gmbh.de",
-    "sanctions": {
-      "hasRussianNationality": false,
-      "hasRussianResidence": false
-    },
     "trademark": {
       "type": "word",
       "text": "MusterBrand"
@@ -151,10 +149,6 @@ curl -X POST http://localhost:3000/api/trademark/register \
       }
     },
     "email": "info@techstartup.de",
-    "sanctions": {
-      "hasRussianNationality": false,
-      "hasRussianResidence": false
-    },
     "trademark": {
       "type": "word",
       "text": "TechBrand2024"
@@ -184,7 +178,7 @@ The JSON request maps to the 8 DPMA form steps as follows:
 | Step | DPMA Form | JSON Fields |
 |------|-----------|-------------|
 | 1 | Anmelder (Applicant) | `applicant`, `sanctions` |
-| 2 | Anwalt/Kanzlei (Lawyer) | `representatives` (optional, skipped if empty) |
+| 2 | Anwalt/Kanzlei (Lawyer) | **ALWAYS SKIPPED** - no lawyer support |
 | 3 | Zustelladresse (Delivery) | `email`, `deliveryAddress` (optional) |
 | 4 | Marke (Trademark) | `trademark` |
 | 5 | Waren/Dienstleistungen | `niceClasses`, `leadClass` |
@@ -197,7 +191,7 @@ The JSON request maps to the 8 DPMA form steps as follows:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `applicant` | object | Yes | Applicant information (see below) |
-| `sanctions` | object | Yes | EU sanctions declaration (see below) |
+| `sanctions` | object | Conditional | Russia sanctions declaration - **ONLY required for Natural Person applicants** (not for Legal Entities) |
 | `email` | string | Yes | Contact email for correspondence |
 | `trademark` | object | Yes | Trademark details (see below) |
 | `niceClasses` | array | Yes | At least one Nice class (see below) |
@@ -205,7 +199,7 @@ The JSON request maps to the 8 DPMA form steps as follows:
 | `paymentMethod` | string | Yes | `"UEBERWEISUNG"` (bank transfer) or `"SEPASDD"` (SEPA) |
 | `sepaDetails` | object | Conditional | Required if paymentMethod is `"SEPASDD"` |
 | `senderName` | string | Yes | Name of sender for final submission |
-| `representatives` | array | No | Legal representative(s) |
+| `representatives` | array | No | **NOT SUPPORTED** - Step 2 is always skipped |
 | `deliveryAddress` | object | No | Alternative delivery address |
 | `options` | object | No | Additional options (see below) |
 | `internalReference` | string | No | Your internal reference number |
@@ -239,25 +233,29 @@ The JSON request maps to the 8 DPMA form steps as follows:
 - `KG` - Kommanditgesellschaft
 - `OHG` / `oHG` - Offene Handelsgesellschaft
 - `GbR` - Gesellschaft bürgerlichen Rechts
+- `eGbR` - eingetragene Gesellschaft bürgerlichen Rechts
 - `eG` - eingetragene Genossenschaft
 - `eV` / `e.V.` - eingetragener Verein
 - `SE` - europäische Gesellschaft
 - `KGaA` - Kommanditgesellschaft auf Aktien
 - `PartG` - Partnerschaftsgesellschaft
 - `PartGmbB` - Partnerschaftsgesellschaft mit beschränkter Berufshaftung
+- `Stiftung` - Stiftung bürgerlichen Rechts
 
 ### Address Object
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `street` | string | Yes | Street name with house number (e.g., "Musterstraße 123") |
-| `addressLine1` | string | No | Additional address line |
-| `addressLine2` | string | No | Additional address line 2 |
+| `addressLine1` | string | No | Additional address line (labeled "Adresszusatz" for Legal Entity) |
+| `addressLine2` | string | No | Additional address line 2 - **Only available for Natural Person** (not for Legal Entity) |
 | `zip` | string | Yes | Postal code (5 digits for Germany) |
 | `city` | string | Yes | City name |
 | `country` | string | Yes | ISO 3166-1 alpha-2 code (e.g., `"DE"`, `"AT"`, `"CH"`) |
 
-### Sanctions Declaration Object
+### Sanctions Declaration Object (Natural Person ONLY)
+
+**IMPORTANT:** This section only applies to Natural Person applicants (`type: "natural"`). Legal Entity applicants do NOT need to provide sanctions information - the DPMA form does not show these fields for companies.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -294,13 +292,27 @@ Use this if you want official correspondence sent to a different address than th
 | `description` | string | No | Trademark description |
 
 **Supported Trademark Types:**
-| Type | Value | Description |
-|------|-------|-------------|
-| Word Mark | `"word"` | Text-only trademark (Wortmarke) |
-| Image Mark | `"figurative"` | Image-only trademark (Bildmarke) |
-| Combined Mark | `"combined"` | Word/image combination (Wort-/Bildmarke) |
 
-**Note:** For `"combined"` marks, only `imageData` is required. The text is embedded within the image itself.
+| Type | API Value | DPMA Form | Status | Description |
+|------|-----------|-----------|--------|-------------|
+| Word Mark | `"word"` | Wortmarke | ✅ **Implemented** | Text-only trademark |
+| Image Mark | `"figurative"` | Bildmarke | ✅ **Implemented** | Pure image trademark (no text) |
+| Combined Mark | `"combined"` | Wort-/Bildmarke | ✅ **Implemented** | Word/image combination (text embedded in image) |
+| 3D Mark | `"3d"` | Dreidimensionale Marke | ✅ **Implemented** | Three-dimensional trademark |
+| Color Mark | `"color"` | Farbmarke | ❌ Not yet implemented | Color trademark |
+| Sound Mark | `"sound"` | Klangmarke | ❌ Not yet implemented | Audio trademark |
+| Position Mark | `"position"` | Positionsmarke | ❌ Not yet implemented | Position-based trademark |
+| Pattern Mark | `"pattern"` | Mustermarke | ❌ Not yet implemented | Pattern/texture trademark |
+| Motion Mark | `"motion"` | Bewegungsmarke | ❌ Not yet implemented | Animated trademark |
+| Multimedia Mark | `"multimedia"` | Multimediamarke | ❌ Not yet implemented | Combined audio/video |
+| Hologram Mark | `"hologram"` | Hologrammmarke | ❌ Not yet implemented | Holographic trademark |
+| Thread Mark | `"thread"` | Kennfadenmarke | ❌ Not yet implemented | Thread marker (textiles) |
+| Other Mark | `"other"` | Sonstige Marke | ❌ Not yet implemented | Other special types |
+
+**Notes:**
+- For `"figurative"`, `"combined"`, and `"3d"` marks, `imageData` is required
+- For `"combined"` marks, the text is embedded within the image itself (no separate text field)
+- Image requirements: JPG format, min 945px on one side, max 2835×2010px
 
 ### Nice Classes Array
 
@@ -350,13 +362,93 @@ Each element in the array:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `acceleratedExamination` | boolean | false | Request accelerated examination (+200 EUR) |
-| `certificationMark` | boolean | false | Register as certification mark |
-| `licensingDeclaration` | boolean | false | Include licensing willingness declaration |
-| `saleDeclaration` | boolean | false | Include sale willingness declaration |
+| `certificationMark` | boolean | false | Register as certification mark (§§ 106a ff. MarkenG) |
+| `licensingDeclaration` | boolean | false | Licensing willingness declaration (§ 42c MarkenV) |
+| `saleDeclaration` | boolean | false | Sale willingness declaration (§ 42c MarkenV) |
+| `priorityClaims` | array | [] | Priority claims (see below) |
+
+### Priority Claims (Optional)
+
+Priority claims allow you to claim an earlier filing date from a foreign application or exhibition. Both types have a **6-month time limit**.
+
+#### Foreign Priority (Ausländische Priorität - §34 MarkenG)
+
+If the trademark was already filed abroad (Paris Convention countries), you can claim that earlier filing date.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Must be `"foreign"` |
+| `date` | string | Yes | ISO date (YYYY-MM-DD), must be within last 6 months |
+| `country` | string | Yes | ISO country code (e.g., `"US"`, `"GB"`, `"EM"` for EU) |
+| `applicationNumber` | string | Yes | Foreign application/file number |
+
+**Example:**
+```json
+{
+  "options": {
+    "priorityClaims": [
+      {
+        "type": "foreign",
+        "date": "2025-10-15",
+        "country": "US",
+        "applicationNumber": "97/123456"
+      }
+    ]
+  }
+}
+```
+
+#### Exhibition Priority (Ausstellungspriorität - §35 MarkenG)
+
+If goods/services were shown at an officially recognized exhibition within the last 6 months.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Must be `"exhibition"` |
+| `date` | string | Yes | ISO date (YYYY-MM-DD), must be within last 6 months |
+| `exhibitionName` | string | Yes | Name of the exhibition |
+
+**Example:**
+```json
+{
+  "options": {
+    "priorityClaims": [
+      {
+        "type": "exhibition",
+        "date": "2025-11-01",
+        "exhibitionName": "CeBIT 2025"
+      }
+    ]
+  }
+}
+```
+
+#### Priority Date Validation
+
+The API validates priority dates before submission:
+- **No future dates**: Date must be in the past
+- **Max 6 months old**: Date cannot be older than 6 months from today
+
+**Note:** Priority proofs must be submitted to DPMA in writing after the application is filed. You will be notified by DPMA after fee payment.
+
+#### Common Country Codes for Foreign Priority
+
+| Code | Country/Organization |
+|------|---------------------|
+| `US` | United States |
+| `GB` | United Kingdom |
+| `FR` | France |
+| `JP` | Japan |
+| `CN` | China |
+| `KR` | South Korea |
+| `EM` | EU Trademark (EUIPO) |
+| `WO` | WIPO (Madrid System) |
 
 ### SEPA Details Object (Required for SEPA payment)
 
-**Note:** Requires a valid SEPA mandate (A9530 form) to be on file with DPMA.
+> ⚠️ **NOT YET IMPLEMENTED**: SEPA direct debit payment is defined in the API schema but not yet functional. Use `"UEBERWEISUNG"` (bank transfer) for now.
+
+**Note:** When implemented, will require a valid SEPA mandate (A9530 form) to be on file with DPMA.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -479,6 +571,301 @@ The Nice Classification divides goods and services into 45 classes:
 | 42 | IT services, software development, SaaS |
 | 43 | Restaurant, hotel, catering services |
 
+## Taxonomy API Endpoints
+
+The API provides REST endpoints for searching and validating Nice classification terms. These endpoints use Damerau-Levenshtein distance for fuzzy matching, which handles typos, missing characters, transpositions, and German umlauts.
+
+### Search Terms
+
+```http
+GET /api/taxonomy/search?q=software&class=9&limit=10
+```
+
+Search for Nice classification terms with fuzzy matching.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | required | Search query (min 2 chars) |
+| `class` | number | all | Filter by Nice class (1-45) |
+| `limit` | number | 20 | Max results (max 100) |
+| `minScore` | number | 0.3 | Minimum similarity score (0-1) |
+| `leafOnly` | boolean | false | Only return leaf terms |
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "requestId": "uuid",
+  "timestamp": "2025-12-23T12:00:00.000Z",
+  "data": {
+    "query": "software",
+    "count": 5,
+    "results": [
+      {
+        "text": "Software",
+        "classNumber": 9,
+        "conceptId": "1528632",
+        "level": 3,
+        "path": ["Klasse 9", "Herunterladbare Software", "Software"],
+        "childCount": 68,
+        "isLeaf": false
+      }
+    ]
+  }
+}
+```
+
+### Validate Terms
+
+```http
+GET /api/taxonomy/validate?terms=Software,Anwendungssoftware&class=9
+POST /api/taxonomy/validate
+Content-Type: application/json
+{ "terms": ["Software", "InvalidTerm"], "classNumber": 9 }
+```
+
+Validate one or more terms against the taxonomy. Returns suggestions for invalid terms.
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "valid": false,
+    "classNumber": 9,
+    "results": [
+      { "term": "Software", "valid": true, "entry": {...} },
+      {
+        "term": "InvalidTerm",
+        "valid": false,
+        "suggestions": [...],
+        "error": "Term \"InvalidTerm\" not found. Did you mean..."
+      }
+    ]
+  }
+}
+```
+
+### List All Classes
+
+```http
+GET /api/taxonomy/classes
+```
+
+Returns summary of all 45 Nice classes.
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "classes": [
+      { "classNumber": 1, "name": "Klasse 1", "category": "goods", "categoryCount": 12, "totalItems": 4633 },
+      { "classNumber": 9, "name": "Klasse 9", "category": "goods", "categoryCount": 10, "totalItems": 5929 },
+      { "classNumber": 42, "name": "Klasse 42", "category": "services", "categoryCount": 6, "totalItems": 1892 }
+    ]
+  }
+}
+```
+
+### Get Class Details
+
+```http
+GET /api/taxonomy/classes/9
+```
+
+Returns detailed information about a specific Nice class.
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "classNumber": 9,
+    "name": "Klasse 9",
+    "category": "goods",
+    "totalItems": 5929,
+    "categories": [
+      { "text": "Software", "level": 2, "childCount": 68, ... },
+      { "text": "IT-Dienstleistungen", "level": 2, "childCount": 45, ... }
+    ],
+    "allEntries": [...]
+  }
+}
+```
+
+### Taxonomy Statistics
+
+```http
+GET /api/taxonomy/stats
+```
+
+Returns statistics about the loaded taxonomy.
+
+**Example Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "totalEntries": 777,
+    "leafCount": 581,
+    "categoryCount": 196,
+    "loaded": true,
+    "classCounts": { "1": 12, "2": 8, "9": 81, ... }
+  }
+}
+```
+
+---
+
+## Nice Classification Taxonomy Service
+
+The API includes a **TaxonomyService** that provides pre-validation of Nice class terms against the official DPMA classification hierarchy. This helps catch invalid terms before submission and provides suggestions for corrections.
+
+### Fuzzy Matching Algorithm
+
+The TaxonomyService uses **Damerau-Levenshtein distance** for fuzzy string matching with these optimizations:
+
+1. **Single-row space optimization**: O(min(m,n)) space instead of O(m*n)
+2. **Early termination**: Stops when distance exceeds threshold
+3. **Length-based pruning**: Skips comparison if length difference exceeds threshold
+4. **Transposition support**: "ab" → "ba" counts as 1 edit, not 2
+5. **Unicode-aware**: Handles German umlauts (ä→ae, ö→oe, ü→ue, ß→ss)
+
+**Supported corrections:**
+| Input | Matches | Reason |
+|-------|---------|--------|
+| `Softawre` | Software | Typo correction |
+| `Softwar` | Software | Missing character |
+| `Softwrae` | Software | Transposition |
+| `Buero` | Büro | Umlaut normalization |
+| `anwendungs software` | Anwendungssoftware | Whitespace handling |
+
+### Taxonomy Structure
+
+The Nice classification is organized hierarchically:
+
+```
+Level 1: Klasse 1-45 (Top-level classes)
+  Level 2: Main categories (e.g., "Software", "IT-Dienstleistungen")
+    Level 3: Subcategories (e.g., "Anwendungssoftware", "Spielsoftware")
+      Level 4+: Deeper subcategories
+        Leaf nodes: Individual selectable terms
+```
+
+The taxonomy database contains **777 category entries** covering all 45 Nice classes. The DPMA form dynamically loads individual terms (~70,000 total) when categories are expanded.
+
+### Using TaxonomyService
+
+```typescript
+import { TaxonomyService, getTaxonomyService } from './client/services';
+
+// Option 1: Get singleton instance (recommended)
+const taxonomy = await getTaxonomyService();
+
+// Option 2: Create your own instance
+const taxonomy = new TaxonomyService();
+await taxonomy.load();
+
+// Check if a term exists
+const result = taxonomy.validateTerm('Software', 9);
+if (result.found) {
+  console.log('Valid term:', result.entry.text);
+} else {
+  console.log('Invalid. Suggestions:', result.suggestions);
+}
+
+// Search for terms
+const matches = taxonomy.search('künstliche intelligenz', {
+  classNumbers: [9],
+  limit: 10
+});
+
+// Get all categories for a class
+const class9Categories = taxonomy.getClassCategories(9);
+```
+
+### Available Methods
+
+| Method | Description |
+|--------|-------------|
+| `load(path?)` | Load taxonomy from JSON file (default: `docs/taxonomyDe.json`) |
+| `isLoaded()` | Check if taxonomy is loaded |
+| `getEntryCount()` | Get total number of indexed entries |
+| `getAvailableClasses()` | Get array of class numbers (1-45) |
+| `findExact(text, classNumber?)` | Find entry by exact text match |
+| `findByConceptId(conceptId)` | Find entry by DPMA concept ID |
+| `search(query, options)` | Fuzzy search with scoring |
+| `validateTerm(term, classNumber?)` | Validate a term with suggestions |
+| `validateNiceClasses(selections)` | Validate entire NiceClassSelection array |
+| `getClassHeader(classNumber)` | Get the class header entry |
+| `getClassCategories(classNumber)` | Get main categories (level 2) for a class |
+| `getStats()` | Get taxonomy statistics |
+
+### Search Options
+
+```typescript
+interface TaxonomySearchOptions {
+  classNumbers?: number[];  // Limit to specific classes
+  leafOnly?: boolean;       // Only return leaf nodes
+  limit?: number;           // Max results (default: 20)
+  minScore?: number;        // Minimum match score 0-1 (default: 0.3)
+}
+```
+
+### Pre-Validation in Step 5
+
+The `Step5NiceClasses` step supports optional pre-validation:
+
+```typescript
+// Automatic validation during execution
+step5.setTaxonomyService(await getTaxonomyService());
+await step5.execute(request);  // Logs validation warnings
+
+// Or explicit pre-validation
+const validation = await step5.preValidate(request.niceClasses);
+if (!validation.valid) {
+  console.log('Errors:', validation.errors);
+  console.log('Warnings:', validation.warnings);
+}
+```
+
+### Common Term Lookup Examples
+
+```typescript
+const taxonomy = await getTaxonomyService();
+
+// Class 9 - Software
+taxonomy.search('software', { classNumbers: [9] });
+// Results: Software, Spielsoftware, Anwendungssoftware, ...
+
+// Class 42 - IT Services
+taxonomy.search('entwicklung', { classNumbers: [42] });
+// Results: Entwicklung, Programmierung und Implementierung von Software, ...
+
+// Cross-class search
+taxonomy.search('werbung');
+// Results from Class 35: Werbung, Marketing und Verkaufsförderung, ...
+```
+
+### Taxonomy Data Source
+
+The taxonomy data (`docs/taxonomyDe.json`) is derived from the official DPMA Nice Classification database. It contains:
+
+- **45 classes** (Klasse 1-45)
+- **777 category entries** (hierarchical structure)
+- **~70,000 leaf terms** (indicated by `ItemsSize` counts, loaded dynamically on DPMA form)
+
+Each entry includes:
+| Field | Description |
+|-------|-------------|
+| `Text` | German term name |
+| `ClassNumber` | Nice class (1-45) |
+| `ConceptId` | Unique DPMA identifier |
+| `Level` | Hierarchy depth |
+| `ItemsSize` | Total leaf terms under this node |
+
 ## File Structure
 
 ```
@@ -490,11 +877,44 @@ dpma/
 │   ├── api/
 │   │   └── server.ts            # Express server & routes
 │   ├── client/
-│   │   └── DPMAClient.ts        # DPMA HTTP client
+│   │   ├── DPMAClient.ts        # Main DPMA client orchestrator
+│   │   ├── http/
+│   │   │   ├── HttpClient.ts    # HTTP client with cookie handling
+│   │   │   ├── AjaxHelpers.ts   # AJAX request builders
+│   │   │   └── index.ts         # HTTP module exports
+│   │   ├── session/
+│   │   │   ├── SessionManager.ts    # JSF session state management
+│   │   │   ├── TokenExtractor.ts    # ViewState/CSRF token extraction
+│   │   │   └── index.ts             # Session module exports
+│   │   ├── services/
+│   │   │   ├── TaxonomyService.ts   # Nice classification validation
+│   │   │   ├── VersandService.ts    # Final submission dispatch
+│   │   │   ├── DocumentService.ts   # Receipt document handling
+│   │   │   └── index.ts             # Services module exports
+│   │   ├── steps/
+│   │   │   ├── BaseStep.ts          # Base class for form steps
+│   │   │   ├── Step1Applicant.ts    # Applicant information
+│   │   │   ├── Step2Lawyer.ts       # Lawyer (always skipped)
+│   │   │   ├── Step3DeliveryAddress.ts  # Delivery address
+│   │   │   ├── Step4Trademark.ts    # Trademark details
+│   │   │   ├── Step5NiceClasses.ts  # Nice classification
+│   │   │   ├── Step6Options.ts      # Additional options
+│   │   │   ├── Step7Payment.ts      # Payment method
+│   │   │   ├── Step8Final.ts        # Summary & submit
+│   │   │   └── index.ts             # Steps module exports
+│   │   └── utils/
+│   │       ├── DebugLogger.ts         # Debug logging utility
+│   │       ├── CountryMapper.ts       # Country code mapping
+│   │       ├── LegalFormMapper.ts     # Legal form normalization
+│   │       ├── LevenshteinDistance.ts # Fuzzy string matching algorithm
+│   │       └── index.ts               # Utils module exports
 │   ├── types/
 │   │   └── dpma.ts              # TypeScript type definitions
 │   └── validation/
 │       └── validateRequest.ts   # Request validation
+├── docs/
+│   ├── DPMA_FORM_FIELDS.md      # Complete form field documentation
+│   └── taxonomyDe.json          # Nice classification hierarchy (German)
 ├── receipts/                     # Downloaded ZIP archives (auto-created)
 ├── debug/                        # Debug files when DEBUG=true (auto-created)
 ├── package.json
@@ -520,31 +940,61 @@ dpma/
 
 4. **Debug Mode**: When `DEBUG=true`, detailed logs are output and response XMLs are saved to the `debug/` folder for troubleshooting.
 
-5. **Nice Class Terms**: Terms must use the exact German names as shown in the DPMA form. The API searches for terms and selects matching checkboxes.
+5. **Nice Class Terms**: Terms must use the exact German names as shown in the DPMA form. The TaxonomyService provides fuzzy matching to help find correct terms.
 
-6. **Image Trademarks**: Currently word marks are fully supported. Image and combined marks require image upload which is partially implemented.
+6. **Implemented Trademark Types**:
+   - ✅ Word marks (`"word"`) - Fully supported
+   - ✅ Image marks (`"figurative"`) - Fully supported with image upload
+   - ✅ Combined marks (`"combined"`) - Fully supported with image upload
+   - ✅ 3D marks (`"3d"`) - Fully supported with image upload
+   - ❌ Other types (color, sound, position, etc.) - Not yet implemented
 
-7. **Delivery Address**: By default, the applicant's address is used. Set `deliveryAddress` with a different address if needed.
+7. **Payment Methods**:
+   - ✅ Bank transfer (`"UEBERWEISUNG"`) - Fully supported
+   - ❌ SEPA direct debit (`"SEPASDD"`) - Not yet implemented (requires A9530 mandate)
+
+8. **Delivery Address**: By default, the applicant's address is used. Set `deliveryAddress` with a different address if needed.
 
 ## Testing
 
-The project includes a comprehensive test suite that covers various registration scenarios.
+The project includes a comprehensive test suite with 181+ unit tests and integration tests.
+
+### Unit Tests (Jest)
 
 ```bash
-# List all available test scenarios
-npx ts-node src/comprehensive-test.ts --list
+# Run all unit tests
+npm test
 
-# Run validation tests only (no DPMA connection)
-npx ts-node src/comprehensive-test.ts --validate-only
+# Run tests in watch mode
+npm run test:watch
 
-# Test invalid request detection
-npx ts-node src/comprehensive-test.ts --invalid
-
-# Run dry-run test (connects to DPMA, stops before final submission)
-npx ts-node src/comprehensive-test.ts --dry-run --scenario 1
+# Run tests with coverage report
+npm run test:coverage
 ```
 
-### Test Modes
+**Test Coverage:**
+- **Validation Tests** (60+ tests): Request structure, applicant types, email formats, Nice classes, payment methods, SEPA validation
+- **Levenshtein Tests** (50+ tests): Distance calculation, similarity scoring, fuzzy matching, German umlaut normalization
+- **Legal Form Tests** (22 tests): All German legal form abbreviations (GmbH, AG, UG, etc.)
+- **Taxonomy Tests** (49 tests): Nice classification loading, search, validation, fuzzy term matching
+
+### Integration Tests
+
+```bash
+# List all available integration test scenarios
+npm run test:integration -- --list
+
+# Run validation tests only (no DPMA connection)
+npm run test:integration -- --validate-only
+
+# Test invalid request detection
+npm run test:integration -- --invalid
+
+# Run dry-run test (connects to DPMA, stops before final submission)
+npm run test:integration -- --dry-run --scenario 1
+```
+
+### Integration Test Modes
 
 | Mode | Description |
 |------|-------------|
@@ -555,7 +1005,7 @@ npx ts-node src/comprehensive-test.ts --dry-run --scenario 1
 
 ### Test Scenarios
 
-The test suite includes 12 scenarios covering:
+The integration test suite includes 12 scenarios covering:
 - Natural persons and legal entities
 - Word marks, image marks, and combined marks
 - Nice class term selection

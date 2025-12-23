@@ -1,20 +1,93 @@
 /**
  * Step5NiceClasses - Handle Nice classification selection
  * This is the most complex step, handling class expansion, search, and checkbox selection
+ *
+ * Now includes optional pre-validation against the local taxonomy database
+ * to catch invalid terms before submitting to the DPMA form.
  */
 
 import {
   TrademarkRegistrationRequest,
   DPMA_VIEW_IDS,
+  NiceClassSelection,
 } from '../../types/dpma';
 import { BaseStep } from './BaseStep';
 import { createUrlEncodedBody, AJAX_HEADERS, BASE_URL } from '../http';
+import { TaxonomyService } from '../services/TaxonomyService';
 
 export class Step5NiceClasses extends BaseStep {
+  private taxonomyService: TaxonomyService | null = null;
+
+  /**
+   * Set a TaxonomyService for pre-validation of terms
+   * If set, terms will be validated against the local taxonomy before submission
+   */
+  setTaxonomyService(service: TaxonomyService): void {
+    this.taxonomyService = service;
+  }
+
+  /**
+   * Pre-validate Nice class selections against the local taxonomy
+   * Call this before execute() to get detailed validation errors
+   */
+  async preValidate(niceClasses: NiceClassSelection[]): Promise<{
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  }> {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    if (!this.taxonomyService) {
+      warnings.push('TaxonomyService not configured - skipping pre-validation');
+      return { valid: true, errors, warnings };
+    }
+
+    if (!this.taxonomyService.isLoaded()) {
+      try {
+        await this.taxonomyService.load();
+      } catch (err: any) {
+        warnings.push(`Could not load taxonomy: ${err.message}`);
+        return { valid: true, errors, warnings };
+      }
+    }
+
+    const validation = this.taxonomyService.validateNiceClasses(niceClasses);
+
+    if (!validation.valid) {
+      errors.push(...validation.allErrors);
+    }
+
+    // Add suggestions for invalid terms
+    for (const [classNum, result] of validation.classResults) {
+      if (!result.valid) {
+        this.logger.log(`Validation failed for class ${classNum}: ${result.errors.join(', ')}`);
+      }
+    }
+
+    return { valid: errors.length === 0, errors, warnings };
+  }
+
   async execute(request: TrademarkRegistrationRequest): Promise<void> {
     this.logger.log('Step 5: Submitting Nice classification...');
 
     const { niceClasses, leadClass } = request;
+
+    // Optional pre-validation if TaxonomyService is configured
+    if (this.taxonomyService) {
+      const validation = await this.preValidate(niceClasses);
+      if (!validation.valid) {
+        this.logger.log('Pre-validation failed:');
+        for (const error of validation.errors) {
+          this.logger.log(`  - ${error}`);
+        }
+        // Log warnings but continue - the DPMA form will be the final arbiter
+        this.logger.log('Continuing despite validation errors (DPMA form will validate)');
+      }
+      for (const warning of validation.warnings) {
+        this.logger.log(`Warning: ${warning}`);
+      }
+    }
 
     // Set lead class (defaults to first selected class)
     const effectiveLeadClass = leadClass ?? niceClasses[0]?.classNumber ?? 9;

@@ -44,6 +44,8 @@ export {
 export {
   VersandService,
   DocumentService,
+  TaxonomyService,
+  getTaxonomyService,
 } from './services';
 
 // Utilities

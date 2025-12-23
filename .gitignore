@@ -41,3 +41,7 @@ Thumbs.db
 
 # NCL classification data (large XML files - download separately)
 ncl-*.xml
+
+# Auto-generated Nice terms files (use docs/taxonomyDe.json instead)
+src/data/nice-terms-complete.ts
+src/data/nice-terms-complete.json

@@ -6,11 +6,13 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { DPMAClient } from '../client/DPMAClient';
+import { TaxonomyService } from '../client/services/TaxonomyService';
 import { validateTrademarkRequest, isValidRequest } from '../validation/validateRequest';
 import {
   TrademarkRegistrationRequest,
   TrademarkRegistrationResult,
   TrademarkRegistrationSuccess,
+  TaxonomyEntry,
 } from '../types/dpma';
 
 // ============================================================================
@@ -38,6 +40,17 @@ interface HealthCheckResponse {
 // ============================================================================
 // Server Setup
 // ============================================================================
+
+// Singleton TaxonomyService instance
+let taxonomyService: TaxonomyService | null = null;
+
+async function getTaxonomy(): Promise<TaxonomyService> {
+  if (!taxonomyService) {
+    taxonomyService = new TaxonomyService();
+    await taxonomyService.load();
+  }
+  return taxonomyService;
+}
 
 export function createServer(options: { debug?: boolean } = {}): express.Application {
   const app = express();
@@ -93,14 +106,321 @@ export function createServer(options: { debug?: boolean } = {}): express.Applica
         version: '1.0.0',
         endpoints: {
           'POST /api/trademark/register': 'Register a new trademark',
+          'GET /api/taxonomy/search': 'Search Nice classification terms',
+          'GET /api/taxonomy/validate': 'Validate Nice class terms',
+          'GET /api/taxonomy/classes': 'List all Nice classes',
+          'GET /api/taxonomy/classes/:id': 'Get Nice class details',
+          'GET /api/taxonomy/stats': 'Get taxonomy statistics',
           'GET /health': 'Health check',
           'GET /api': 'API documentation',
         },
-        documentation: 'See DPMA_AUTOMATION.md for detailed documentation',
+        documentation: 'See README.md for detailed documentation',
       },
     };
     res.json(response);
   });
+
+  // ============================================================================
+  // Taxonomy API Endpoints
+  // ============================================================================
+
+  /**
+   * Search Nice classification terms
+   * GET /api/taxonomy/search?q=software&class=9&limit=10
+   */
+  app.get('/api/taxonomy/search', async (req: Request, res: Response) => {
+    const requestId = (req as any).requestId || uuidv4();
+    const timestamp = new Date().toISOString();
+
+    try {
+      const taxonomy = await getTaxonomy();
+
+      const query = (req.query.q as string) || '';
+      const classNumber = req.query.class ? parseInt(req.query.class as string, 10) : undefined;
+      const limit = Math.min(parseInt((req.query.limit as string) || '20', 10), 100);
+      const minScore = parseFloat((req.query.minScore as string) || '0.3');
+      const leafOnly = req.query.leafOnly === 'true';
+
+      if (!query || query.length < 2) {
+        return res.status(400).json({
+          success: false,
+          requestId,
+          timestamp,
+          error: {
+            code: 'INVALID_QUERY',
+            message: 'Query parameter "q" must be at least 2 characters',
+          },
+        });
+      }
+
+      const results = taxonomy.search(query, {
+        classNumbers: classNumber ? [classNumber] : undefined,
+        limit,
+        minScore,
+        leafOnly,
+      });
+
+      const response: ApiResponse<{ query: string; results: TaxonomyEntry[]; count: number }> = {
+        success: true,
+        requestId,
+        timestamp,
+        data: {
+          query,
+          results,
+          count: results.length,
+        },
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        requestId,
+        timestamp,
+        error: {
+          code: 'TAXONOMY_ERROR',
+          message: error.message,
+        },
+      });
+    }
+  });
+
+  /**
+   * Validate Nice class terms
+   * GET /api/taxonomy/validate?terms=Software,Anwendungssoftware&class=9
+   * POST /api/taxonomy/validate { "terms": ["Software"], "classNumber": 9 }
+   */
+  app.all('/api/taxonomy/validate', async (req: Request, res: Response) => {
+    const requestId = (req as any).requestId || uuidv4();
+    const timestamp = new Date().toISOString();
+
+    try {
+      const taxonomy = await getTaxonomy();
+
+      // Support both GET (query params) and POST (body)
+      let terms: string[];
+      let classNumber: number | undefined;
+
+      if (req.method === 'POST') {
+        terms = req.body.terms || [];
+        classNumber = req.body.classNumber;
+      } else {
+        const termsParam = req.query.terms as string;
+        terms = termsParam ? termsParam.split(',').map(t => t.trim()) : [];
+        classNumber = req.query.class ? parseInt(req.query.class as string, 10) : undefined;
+      }
+
+      if (terms.length === 0) {
+        return res.status(400).json({
+          success: false,
+          requestId,
+          timestamp,
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'At least one term is required',
+          },
+        });
+      }
+
+      // Validate each term
+      const results: Array<{
+        term: string;
+        valid: boolean;
+        entry?: TaxonomyEntry;
+        suggestions?: TaxonomyEntry[];
+        error?: string;
+      }> = [];
+
+      let allValid = true;
+
+      for (const term of terms) {
+        const validation = taxonomy.validateTerm(term, classNumber);
+        results.push({
+          term,
+          valid: validation.found,
+          entry: validation.entry,
+          suggestions: validation.suggestions,
+          error: validation.error,
+        });
+        if (!validation.found) allValid = false;
+      }
+
+      const response: ApiResponse<{
+        valid: boolean;
+        classNumber?: number;
+        results: typeof results;
+      }> = {
+        success: true,
+        requestId,
+        timestamp,
+        data: {
+          valid: allValid,
+          classNumber,
+          results,
+        },
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        requestId,
+        timestamp,
+        error: {
+          code: 'TAXONOMY_ERROR',
+          message: error.message,
+        },
+      });
+    }
+  });
+
+  /**
+   * List all Nice classes
+   * GET /api/taxonomy/classes
+   */
+  app.get('/api/taxonomy/classes', async (req: Request, res: Response) => {
+    const requestId = (req as any).requestId || uuidv4();
+    const timestamp = new Date().toISOString();
+
+    try {
+      const taxonomy = await getTaxonomy();
+      const classes = taxonomy.getAvailableClasses();
+
+      const classInfo = classes.map(num => {
+        const header = taxonomy.getClassHeader(num);
+        const categories = taxonomy.getClassCategories(num);
+        return {
+          classNumber: num,
+          name: header?.text || `Klasse ${num}`,
+          category: num <= 34 ? 'goods' : 'services',
+          categoryCount: categories.length,
+          totalItems: header?.childCount || 0,
+        };
+      });
+
+      const response: ApiResponse<{ classes: typeof classInfo }> = {
+        success: true,
+        requestId,
+        timestamp,
+        data: { classes: classInfo },
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        requestId,
+        timestamp,
+        error: {
+          code: 'TAXONOMY_ERROR',
+          message: error.message,
+        },
+      });
+    }
+  });
+
+  /**
+   * Get Nice class details
+   * GET /api/taxonomy/classes/:id
+   */
+  app.get('/api/taxonomy/classes/:id', async (req: Request, res: Response) => {
+    const requestId = (req as any).requestId || uuidv4();
+    const timestamp = new Date().toISOString();
+
+    try {
+      const taxonomy = await getTaxonomy();
+      const classNumber = parseInt(req.params.id, 10);
+
+      if (isNaN(classNumber) || classNumber < 1 || classNumber > 45) {
+        return res.status(400).json({
+          success: false,
+          requestId,
+          timestamp,
+          error: {
+            code: 'INVALID_CLASS',
+            message: 'Class number must be between 1 and 45',
+          },
+        });
+      }
+
+      const header = taxonomy.getClassHeader(classNumber);
+      const categories = taxonomy.getClassCategories(classNumber);
+      const entries = taxonomy.getClassEntries(classNumber);
+
+      const response: ApiResponse<{
+        classNumber: number;
+        name: string;
+        category: string;
+        totalItems: number;
+        categories: TaxonomyEntry[];
+        allEntries: TaxonomyEntry[];
+      }> = {
+        success: true,
+        requestId,
+        timestamp,
+        data: {
+          classNumber,
+          name: header?.text || `Klasse ${classNumber}`,
+          category: classNumber <= 34 ? 'goods' : 'services',
+          totalItems: header?.childCount || 0,
+          categories,
+          allEntries: entries,
+        },
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        requestId,
+        timestamp,
+        error: {
+          code: 'TAXONOMY_ERROR',
+          message: error.message,
+        },
+      });
+    }
+  });
+
+  /**
+   * Get taxonomy statistics
+   * GET /api/taxonomy/stats
+   */
+  app.get('/api/taxonomy/stats', async (req: Request, res: Response) => {
+    const requestId = (req as any).requestId || uuidv4();
+    const timestamp = new Date().toISOString();
+
+    try {
+      const taxonomy = await getTaxonomy();
+      const stats = taxonomy.getStats();
+
+      const response: ApiResponse<typeof stats & { loaded: boolean }> = {
+        success: true,
+        requestId,
+        timestamp,
+        data: {
+          ...stats,
+          loaded: taxonomy.isLoaded(),
+        },
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        requestId,
+        timestamp,
+        error: {
+          code: 'TAXONOMY_ERROR',
+          message: error.message,
+        },
+      });
+    }
+  });
+
+  // ============================================================================
+  // Trademark Registration Endpoint
+  // ============================================================================
 
   /**
    * Main trademark registration endpoint
@@ -261,8 +581,17 @@ export function startServer(port: number = 3000, options: { debug?: boolean } = 
 ║                                                               ║
 ║   Server running on: http://localhost:${port.toString().padEnd(24)}║
 ║                                                               ║
-║   Endpoints:                                                  ║
+║   Trademark Endpoints:                                        ║
 ║   • POST /api/trademark/register  - Register trademark        ║
+║                                                               ║
+║   Taxonomy Endpoints:                                         ║
+║   • GET  /api/taxonomy/search     - Search terms              ║
+║   • GET  /api/taxonomy/validate   - Validate terms            ║
+║   • GET  /api/taxonomy/classes    - List Nice classes         ║
+║   • GET  /api/taxonomy/classes/:id - Get class details        ║
+║   • GET  /api/taxonomy/stats      - Taxonomy statistics       ║
+║                                                               ║
+║   Utility Endpoints:                                          ║
 ║   • GET  /health                  - Health check              ║
 ║   • GET  /api                     - API documentation         ║
 ║                                                               ║

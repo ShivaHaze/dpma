@@ -24,7 +24,9 @@ export class Step1Applicant extends BaseStep {
       const natural = applicant as NaturalPersonApplicant;
       fields['daf-applicant:addressEntityType'] = 'natural';
       if (natural.salutation) {
+        // Set both the hidden select AND the visible editable input for salutation
         fields['daf-applicant:namePrefix:valueHolder_input'] = natural.salutation;
+        fields['daf-applicant:namePrefix:valueHolder_editableInput'] = natural.salutation;
       }
       fields['daf-applicant:lastName:valueHolder'] = natural.lastName;
       fields['daf-applicant:firstName:valueHolder'] = natural.firstName;
@@ -54,24 +56,29 @@ export class Step1Applicant extends BaseStep {
         fields['daf-applicant:namePrefix:valueHolder_editableInput'] = mappedForm;
       }
       fields['daf-applicant:street:valueHolder'] = legal.address.street;
+      // Note: Legal Entity only has addressLine1 (labeled "Adresszusatz"), NOT addressLine2
       if (legal.address.addressLine1) {
         fields['daf-applicant:addressLine1:valueHolder'] = legal.address.addressLine1;
       }
-      if (legal.address.addressLine2) {
-        fields['daf-applicant:addressLine2:valueHolder'] = legal.address.addressLine2;
-      }
+      // addressLine2 is NOT available for Legal Entity - do not set it
       fields['daf-applicant:zip:valueHolder'] = legal.address.zip;
       fields['daf-applicant:city:valueHolder'] = legal.address.city;
       fields['daf-applicant:country:valueHolder_input'] = legal.address.country;
+      // Note: Legal Entity does NOT have sanctions declaration fields
     }
 
-    // Sanctions declaration
-    fields['daf-applicant:daf-declaration:nationalitySanctionLine'] =
-      sanctions.hasRussianNationality ? SanctionDeclaration.TRUE : SanctionDeclaration.FALSE;
-    fields['daf-applicant:daf-declaration:residenceSanctionLine'] =
-      sanctions.hasRussianResidence ? SanctionDeclaration.TRUE : SanctionDeclaration.FALSE;
-    fields['daf-applicant:daf-declaration:evidenceProofCheckbox_input'] = 'on';
-    fields['daf-applicant:daf-declaration:changesProofCheckbox_input'] = 'on';
+    // Sanctions declaration - ONLY for Natural Person
+    // Legal entities are not subject to the Russia sanctions declaration requirement
+    if (applicant.type === ApplicantType.NATURAL && sanctions) {
+      fields['daf-applicant:daf-declaration:nationalitySanctionLine'] =
+        sanctions.hasRussianNationality ? SanctionDeclaration.TRUE : SanctionDeclaration.FALSE;
+      fields['daf-applicant:daf-declaration:residenceSanctionLine'] =
+        sanctions.hasRussianResidence ? SanctionDeclaration.TRUE : SanctionDeclaration.FALSE;
+      fields['daf-applicant:daf-declaration:evidenceProofCheckbox_input'] = 'on';
+      fields['daf-applicant:daf-declaration:changesProofCheckbox_input'] = 'on';
+    } else if (applicant.type === ApplicantType.NATURAL && !sanctions) {
+      throw new Error('Sanctions declaration is required for Natural Person applicants');
+    }
 
     await this.submitStep(fields, DPMA_VIEW_IDS.STEP_1_TO_2);
     this.logger.log('Step 1 completed');

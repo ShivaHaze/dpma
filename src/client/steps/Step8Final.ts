@@ -19,15 +19,19 @@ export class Step8Final extends BaseStep {
   async execute(request: TrademarkRegistrationRequest): Promise<string> {
     this.logger.log('Step 8: Final submission...');
 
-    // Get the sender name for confirmation
+    // Use the sender name from request, or derive from applicant as fallback
     let senderName: string;
-    if (request.applicant.type === ApplicantType.NATURAL) {
+    if (request.senderName) {
+      senderName = request.senderName;
+    } else if (request.applicant.type === ApplicantType.NATURAL) {
       const natural = request.applicant as NaturalPersonApplicant;
       senderName = `${natural.firstName} ${natural.lastName}`;
     } else {
       const legal = request.applicant as LegalEntityApplicant;
       senderName = legal.companyName;
     }
+
+    this.logger.log(`Sender name for confirmation: ${senderName}`);
 
     const fields: Record<string, string> = {
       'chBoxConfirmText_input': 'on',
